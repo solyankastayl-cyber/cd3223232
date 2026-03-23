@@ -1,0 +1,1128 @@
+"""
+Per-Timeframe TA Builder
+========================
+
+Builds COMPLETE TA payload for a single timeframe.
+Each TF is an isolated world — NO mixing between timeframes.
+
+Output for each TF:
+  {
+    "timeframe": "4H",
+    "candles": [...],
+    "decision": {...},
+    "structure_context": {...},
+    "liquidity": {...},
+    "displacement": {...},
+    "fib": {...},
+    "poi": {...},
+    "primary_pattern": {...},
+    "unified_setup": {...},
+    "trade_setup": {...},
+    "execution": {...},
+    "base_layer": {...},
+    "chain_map": [...]   # For chain highlighting
+  }
+"""
+
+from __future__ import annotations
+from typing import Dict, Any, List, Optional
+from datetime import datetime, timezone
+
+# Import all engines
+from modules.ta_engine.setup.pattern_validator_v2 import get_pattern_validator_v2
+from modules.ta_engine.setup.structure_engine_v2 import get_structure_engine_v2
+from modules.ta_engine.setup.structure_context_engine import structure_context_engine
+from modules.ta_engine.setup.pattern_ranking_engine import pattern_ranking_engine
+from modules.ta_engine.setup.pattern_selector import get_pattern_selector
+
+# NEW: Structure Builder v2 + Pattern Engine v3
+from modules.ta_engine.setup.structure_builder import get_structure_builder
+from modules.ta_engine.setup.pattern_engine_v3 import get_pattern_engine_v3
+
+# Get singleton instance
+pattern_selector = get_pattern_selector()
+from modules.ta_engine.setup.pattern_expiration import pattern_expiration_engine
+from modules.ta_engine.setup.pattern_registry import run_all_detectors, filter_by_structure, penalize_overused_patterns, validate_candidate
+
+# IMPORTANT: Import pattern_detectors_unified to register all detectors
+# This triggers @register_pattern decorators at import time
+from modules.ta_engine.setup import pattern_detectors_unified  # noqa: F401
+
+from modules.ta_engine.decision import get_decision_engine_v2
+from modules.ta_engine.scenario import get_scenario_engine_v3
+from modules.ta_engine.structure import get_choch_validation_engine
+from modules.ta_engine.liquidity import get_liquidity_engine
+from modules.ta_engine.displacement import get_displacement_engine
+from modules.ta_engine.poi import get_poi_engine
+from modules.ta_engine.fibonacci import get_fibonacci_engine
+from modules.ta_engine.trade_setup import get_trade_setup_generator
+from modules.ta_engine.setup.unified_setup_engine import get_unified_setup_engine
+from modules.ta_engine.execution import get_execution_layer
+from modules.ta_engine.setup.indicator_engine import get_indicator_engine
+from modules.ta_engine.indicators import get_indicator_registry, get_confluence_engine
+from modules.ta_engine.indicators.indicator_visualization import IndicatorVisualizationEngine
+from modules.ta_engine.indicators.indicator_insights import get_indicator_insights_engine
+from modules.ta_engine.contribution import get_contribution_engine
+from modules.ta_engine.render_plan import get_render_plan_engine_v2
+from modules.ta_engine.market_state import get_market_state_engine
+from modules.ta_engine.patterns.pattern_geometry_contract import normalize_pattern_geometry
+from modules.ta_engine.structure import StructureVisualizationBuilder
+
+
+# Singleton for visualization engine
+_indicator_viz_engine = None
+_render_plan_engine_v2 = None
+_market_state_engine = None
+_structure_viz_builder = None
+
+def get_indicator_viz_engine():
+    global _indicator_viz_engine
+    if _indicator_viz_engine is None:
+        _indicator_viz_engine = IndicatorVisualizationEngine()
+    return _indicator_viz_engine
+
+def _get_render_plan_engine():
+    global _render_plan_engine_v2
+    if _render_plan_engine_v2 is None:
+        _render_plan_engine_v2 = get_render_plan_engine_v2()
+    return _render_plan_engine_v2
+
+def _get_market_state_engine():
+    global _market_state_engine
+    if _market_state_engine is None:
+        _market_state_engine = get_market_state_engine()
+    return _market_state_engine
+
+def _get_structure_viz_builder():
+    global _structure_viz_builder
+    if _structure_viz_builder is None:
+        _structure_viz_builder = StructureVisualizationBuilder()
+    return _structure_viz_builder
+
+
+# TF Configuration
+TF_CONFIG = {
+    "1H": {
+        "lookback": 168,        # 7 days of hourly
+        "pivot_window": 2,
+        "min_pivot_distance": 3,
+        "pattern_window": 120,
+        "candle_type": "1h",
+        "description": "Micro entry timing"
+    },
+    "4H": {
+        "lookback": 200,
+        "pivot_window": 3,
+        "min_pivot_distance": 5,
+        "pattern_window": 150,
+        "candle_type": "4h",
+        "description": "Entry timing"
+    },
+    "1D": {
+        "lookback": 150,
+        "pivot_window": 5,
+        "min_pivot_distance": 8,
+        "pattern_window": 100,
+        "candle_type": "1d",
+        "description": "Setup patterns"
+    },
+    "7D": {
+        "lookback": 65,        # ~65 weekly candles = ~1.2 years
+        "pivot_window": 2,      # Smaller for aggregated data
+        "min_pivot_distance": 2,
+        "pattern_window": 50,
+        "candle_type": "7d",
+        "description": "Weekly formations"
+    },
+    # 1M - Monthly (proper TA name)
+    "1M": {
+        "lookback": 42,         # ~42 monthly candles = ~3.5 years
+        "pivot_window": 2,      # Very small for monthly
+        "min_pivot_distance": 1,
+        "pattern_window": 30,
+        "candle_type": "1M",
+        "description": "Monthly structure"
+    },
+    # 30D - Legacy alias for 1M
+    "30D": {
+        "lookback": 42,         # Same as 1M
+        "pivot_window": 2,
+        "min_pivot_distance": 1,
+        "pattern_window": 30,
+        "candle_type": "30d",
+        "description": "Monthly structure (legacy)"
+    },
+    # 6M - Semi-annual (proper TA name)
+    "6M": {
+        "lookback": 12,         # ~12 half-year candles = ~6 years
+        "pivot_window": 1,      # Minimal for 6-month
+        "min_pivot_distance": 1,
+        "pattern_window": 10,
+        "candle_type": "6M",
+        "description": "Macro cycles"
+    },
+    # 180D - Legacy alias for 6M
+    "180D": {
+        "lookback": 12,         # Same as 6M
+        "pivot_window": 1,
+        "min_pivot_distance": 1,
+        "pattern_window": 10,
+        "candle_type": "180d",
+        "description": "Macro cycles (legacy)"
+    },
+    "1Y": {
+        "lookback": 11,         # ~11 yearly candles = ~11 years
+        "pivot_window": 1,      # Minimal for yearly
+        "min_pivot_distance": 1,
+        "pattern_window": 8,
+        "candle_type": "1Y",
+        "description": "Secular trends"
+    },
+}
+
+
+class PerTimeframeBuilder:
+    """
+    Builds complete TA payload for ONE timeframe.
+    Isolated from other timeframes — each TF is its own world.
+    """
+    
+    def build(
+        self,
+        candles: List[Dict[str, Any]],
+        symbol: str,
+        timeframe: str,
+        mtf_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Build complete TA for a single timeframe.
+        
+        Args:
+            candles: OHLCV candles for this specific timeframe
+            symbol: Trading pair (e.g., "BTCUSDT")
+            timeframe: The timeframe string (e.g., "4H", "1D")
+            mtf_context: Optional MTF context for alignment calculation
+        """
+        import time as time_module
+        start_time = time_module.time()
+        print(f"[PerTF] Starting build for {symbol}:{timeframe} with {len(candles)} candles")
+        
+        config = TF_CONFIG.get(timeframe, TF_CONFIG["1D"])
+        
+        # ═══════════════════════════════════════════════════════════════
+        # HTF ROUTING — Use HTF Context Engine for macro timeframes
+        # ═══════════════════════════════════════════════════════════════
+        HTF_TIMEFRAMES = {"1M", "30D", "6M", "180D", "1Y"}
+        
+        if timeframe.upper() in HTF_TIMEFRAMES:
+            print(f"[PerTF] Routing to HTF Context Engine for {timeframe}")
+            return self._build_htf_context(candles, symbol, timeframe)
+        
+        # Minimum candles depends on timeframe
+        # Higher TFs like 180D and 1Y have limited historical data
+        MIN_CANDLES_MAP = {
+            "1H": 30,
+            "4H": 30,
+            "1D": 30,
+            "7D": 20,
+            "30D": 10,
+            "180D": 5,
+            "1Y": 5,
+        }
+        min_candles = MIN_CANDLES_MAP.get(timeframe.upper(), 30)
+        
+        # Empty result template
+        empty = self._empty_result(timeframe, symbol)
+        
+        if len(candles) < min_candles:
+            print(f"[PerTF] Not enough candles ({len(candles)} < {min_candles})")
+            return empty
+        
+        current_price = float(candles[-1]["close"])
+        
+        # =============================================
+        # STEP 1: STRUCTURE ANALYSIS (FIRST!)
+        # =============================================
+        print(f"[PerTF] Step 1: Structure analysis...")
+        structure_v2 = get_structure_engine_v2(timeframe)
+        validator = get_pattern_validator_v2(timeframe.upper(), config)
+        pivot_highs_raw, pivot_lows_raw = validator.find_pivots(candles)
+        print(f"[PerTF] Found {len(pivot_highs_raw)} highs, {len(pivot_lows_raw)} lows")
+        
+        # Convert Pivot objects to dicts for engines that need dict
+        pivot_highs = [
+            {"price": p.value, "index": p.index, "time": p.time}
+            for p in pivot_highs_raw
+        ]
+        pivot_lows = [
+            {"price": p.value, "index": p.index, "time": p.time}
+            for p in pivot_lows_raw
+        ]
+        
+        if len(pivot_highs) < 2 or len(pivot_lows) < 2:
+            print(f"[PerTF] Not enough pivots (highs={len(pivot_highs)}, lows={len(pivot_lows)})")
+            # For higher timeframes with limited data, proceed with available pivots
+            if timeframe.upper() in ("180D", "1Y") and (len(pivot_highs) >= 1 or len(pivot_lows) >= 1):
+                print(f"[PerTF] Proceeding with limited pivots for {timeframe}")
+            else:
+                return empty
+        
+        print(f"[PerTF] Building structure_state...")
+        structure_state = structure_v2.build(
+            candles=candles,
+            pivots_high=pivot_highs,
+            pivots_low=pivot_lows,
+        )
+        
+        print(f"[PerTF] Building structure_context...")
+        structure_context = structure_context_engine.build(
+            candles=candles,
+            pivots_high=pivot_highs,
+            pivots_low=pivot_lows,
+        )
+        
+        # Convert to dict for engines that need dict
+        structure_context_dict = structure_context.to_dict()
+        
+        # =============================================
+        # STEP 2: LIQUIDITY & DISPLACEMENT
+        # =============================================
+        print(f"[PerTF] Step 2: Liquidity & Displacement...")
+        liquidity_engine = get_liquidity_engine()
+        liquidity = liquidity_engine.build(candles)
+        
+        displacement_engine = get_displacement_engine()
+        displacement = displacement_engine.build(candles)
+        
+        # =============================================
+        # STEP 3: CHOCH VALIDATION
+        # =============================================
+        print(f"[PerTF] Step 3: CHOCH validation...")
+        choch_engine = get_choch_validation_engine()
+        choch_validation = choch_engine.build(
+            structure_context=structure_context_dict,
+            liquidity=liquidity,
+            displacement=displacement,
+            base_layer={},
+        )
+        
+        # =============================================
+        # STEP 4: POI & FIBONACCI
+        # =============================================
+        print(f"[PerTF] Step 4: POI & Fibonacci...")
+        poi_engine = get_poi_engine()
+        poi = poi_engine.build(candles, displacement)
+        
+        fib_engine = get_fibonacci_engine()
+        fib = fib_engine.build(candles, pivot_highs, pivot_lows, structure_context_dict, timeframe)
+        
+        # =============================================
+        # STEP 5: PATTERN DETECTION (Using Pattern Engine v3)
+        # =============================================
+        print(f"[PerTF] Step 5: Pattern detection...")
+        
+        # NEW: Build clean structure from pivots using Structure Builder v2
+        structure_builder = get_structure_builder(timeframe)
+        
+        # Combine pivot highs and lows with type info
+        # Handle both dict and Pivot objects
+        combined_pivots = []
+        for h in pivot_highs_raw:
+            if hasattr(h, 'value'):
+                # Pivot object
+                p = {
+                    "value": h.value,
+                    "price": h.value,
+                    "time": h.time if hasattr(h, 'time') else 0,
+                    "index": h.index if hasattr(h, 'index') else 0,
+                    "type": "high",
+                }
+            elif isinstance(h, dict):
+                p = h.copy()
+                p["type"] = "high"
+                p["price"] = p.get("value", p.get("price", 0))
+            else:
+                continue
+            combined_pivots.append(p)
+        
+        for l in pivot_lows_raw:
+            if hasattr(l, 'value'):
+                # Pivot object
+                p = {
+                    "value": l.value,
+                    "price": l.value,
+                    "time": l.time if hasattr(l, 'time') else 0,
+                    "index": l.index if hasattr(l, 'index') else 0,
+                    "type": "low",
+                }
+            elif isinstance(l, dict):
+                p = l.copy()
+                p["type"] = "low"
+                p["price"] = p.get("value", p.get("price", 0))
+            else:
+                continue
+            combined_pivots.append(p)
+        
+        # Sort by index/time
+        combined_pivots.sort(key=lambda x: x.get("index", x.get("time", 0)))
+        
+        # Build clean structure
+        clean_structure = structure_builder.build(combined_pivots)
+        print(f"[PerTF] Clean structure: {len(clean_structure['structure'])} points, "
+              f"{len(clean_structure['highs'])} highs, {len(clean_structure['lows'])} lows")
+        
+        # NEW: Use Pattern Engine v3 for detection
+        pattern_engine = get_pattern_engine_v3(timeframe)
+        v3_patterns = pattern_engine.detect(clean_structure)
+        print(f"[PerTF] Pattern Engine v3 found: {len(v3_patterns)} patterns")
+        
+        # Also run legacy detectors for compatibility
+        all_candidates = run_all_detectors(
+            candles=candles,
+            pivots_high=pivot_highs_raw,
+            pivots_low=pivot_lows_raw,
+            levels=[],
+            structure_ctx=structure_context,
+            timeframe=timeframe,
+            config=config
+        )
+        print(f"[PerTF] Legacy detectors found: {len(all_candidates)}")
+        
+        # Convert v3 patterns to PatternCandidate format
+        for v3_pat in v3_patterns:
+            from modules.ta_engine.setup.pattern_candidate import PatternCandidate
+            
+            # Get geometry from v3 pattern
+            v3_geo = v3_pat.geometry
+            
+            # Build points dict for PatternCandidate
+            points = {}
+            if "upper" in v3_geo:
+                points["upper"] = v3_geo["upper"]
+            if "lower" in v3_geo:
+                points["lower"] = v3_geo["lower"]
+            if "peaks" in v3_geo:
+                points["peaks"] = v3_geo["peaks"]
+            if "troughs" in v3_geo:
+                points["troughs"] = v3_geo["troughs"]
+            if "neckline" in v3_geo:
+                points["neckline"] = [v3_geo["neckline"]] if isinstance(v3_geo["neckline"], dict) else v3_geo["neckline"]
+            if "markers" in v3_geo:
+                points["markers"] = v3_geo["markers"]
+            
+            candidate = PatternCandidate(
+                type=v3_pat.type,
+                direction=v3_pat.direction,
+                confidence=v3_pat.confidence,
+                geometry_score=0.8,  # v3 patterns have validated geometry
+                touch_count=v3_pat.touches_upper + v3_pat.touches_lower,
+                containment=0.7,
+                line_scores={"upper": v3_pat.touches_upper * 10, "lower": v3_pat.touches_lower * 10},
+                points=points,
+                anchor_points=v3_geo.get("anchor_highs", []) + v3_geo.get("anchor_lows", []),
+                start_index=0,
+                end_index=len(candles) - 1,
+                last_touch_index=len(candles) - 1,
+            )
+            all_candidates.append(candidate)
+        
+        print(f"[PerTF] Total candidates: {len(all_candidates)}")
+        for c in all_candidates[:5]:
+            print(f"[PerTF]   - {c.type}: geo={c.geometry_score:.2f}, conf={c.confidence:.2f}")
+        
+        # Validate and filter
+        validated = [c for c in all_candidates if validate_candidate(c)]
+        print(f"[PerTF] After validation: {len(validated)}")
+        
+        gated = filter_by_structure(validated, structure_context)
+        print(f"[PerTF] After structure filter: {len(gated)}")
+        
+        # Hard filter for recency
+        filtered = self._hard_filter_recency(gated, candles)
+        print(f"[PerTF] After recency filter: {len(filtered)}")
+        
+        # Expire old patterns
+        live = pattern_expiration_engine.filter_expired(filtered, len(candles) - 1, timeframe)
+        print(f"[PerTF] After expiration: {len(live)}")
+        
+        # Rank patterns
+        ranked = pattern_ranking_engine.rank(
+            candidates=live,
+            structure_ctx=structure_context,
+            levels=[],
+            current_price=current_price,
+        )
+        
+        # Penalize overused
+        diversified = penalize_overused_patterns(ranked)
+        
+        # Select best with market context using PSE v2.0
+        primary_pattern, alternatives = pattern_selector.select(
+            diversified,
+            candles=candles,
+            current_price=current_price,
+            market_state=structure_context_dict,
+            structure_context=structure_context_dict,
+            levels=[],
+            liquidity=liquidity,
+            fib=fib,
+            poi=poi,
+        )
+        print(f"[PerTF] Pattern selected: {primary_pattern.type if primary_pattern else 'None'}")
+        
+        # =============================================
+        # STEP 5B: PATTERN RENDER CONTRACT V8 (HISTORY SCAN)
+        # =============================================
+        print(f"[PerTF] Step 5b: Scanning history for patterns...")
+        try:
+            # NEW V8: Use History Scanner - find LAST VALID STRUCTURE
+            from modules.ta_engine.pattern.anchor_pattern_builder import get_anchor_pattern_builder
+            from modules.ta_engine.pattern_history_scanner import PatternHistoryScanner
+            
+            anchor_builder = get_anchor_pattern_builder()
+            
+            # Create detector function for scanner
+            def detect_pattern_in_window(window_candles):
+                return anchor_builder.build(window_candles)
+            
+            # Initialize scanner
+            scanner = PatternHistoryScanner()
+            
+            # Scan history - pass detector as argument (not stored)
+            pattern_render_contract, alt_render_contracts = scanner.scan(
+                candles, 
+                timeframe,
+                pattern_detector=detect_pattern_in_window
+            )
+            
+            if pattern_render_contract:
+                # Mark as V8 HISTORY SCAN engine
+                pattern_render_contract["engine"] = "V8_HISTORY_SCAN"
+                pattern_render_contract["source"] = "HISTORY_SCAN_V8"
+                
+                is_fallback = pattern_render_contract.get("is_fallback", False)
+                
+                if is_fallback:
+                    print(f"[PerTF] 📊 Structure fallback: {pattern_render_contract.get('direction')}")
+                else:
+                    print(f"[PerTF] ✅ History scan pattern: {pattern_render_contract.get('type')} "
+                          f"score={pattern_render_contract.get('_final_score', 0):.2f} "
+                          f"recency={pattern_render_contract.get('_recency', 0):.2f}")
+                
+                # Mark alternatives
+                for i, alt in enumerate(alt_render_contracts):
+                    alt["engine"] = "V8_HISTORY_SCAN"
+                    alt["source"] = "HISTORY_SCAN_V8"
+                    alt["is_alternative"] = True
+                    alt["alternative_rank"] = i + 1
+            else:
+                print(f"[PerTF] ⚠️ No pattern found even with history scan")
+                alt_render_contracts = []
+            
+        except Exception as e:
+            print(f"[PerTF] Pattern build error: {e}")
+            import traceback
+            traceback.print_exc()
+            pattern_render_contract = None
+            alt_render_contracts = []
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 5c: PATTERN DETECTION via ta_pipeline_v2 ONLY
+        # ═══════════════════════════════════════════════════════════════
+        # CRITICAL: NO FALLBACK TO OLD PIPELINE
+        USE_TA_PIPELINE_V2_ONLY = True
+        
+        print(f"[PerTF] Step 5c: Pattern detection (V2 ONLY)...")
+        display_message = None
+        candidate_pattern = None
+        
+        if USE_TA_PIPELINE_V2_ONLY:
+            try:
+                from modules.ta_engine.ta_pipeline_v2 import get_pattern_contract_v2
+                pattern_render_contract = get_pattern_contract_v2(candles, timeframe)
+                
+                if pattern_render_contract:
+                    pattern_render_contract["engine"] = "V2_MULTI_LAYER"
+                    pattern_render_contract["source"] = "TA_PIPELINE_V2"
+                    pattern_render_contract["pipeline_source"] = "v2"
+                    
+                    # Log debug info
+                    debug = pattern_render_contract.get("debug", {})
+                    print(f"[PerTF] V2 RESULT: {{"
+                          f"tf: '{timeframe}', "
+                          f"pipeline: 'v2', "
+                          f"selected_pattern: '{pattern_render_contract.get('type')}', "
+                          f"score: {pattern_render_contract.get('combined_score', 0):.2f}, "
+                          f"touches_upper: {debug.get('touch_upper', 'N/A')}, "
+                          f"touches_lower: {debug.get('touch_lower', 'N/A')}, "
+                          f"window_bars: {debug.get('window_bars', 'N/A')}"
+                          f"}}")
+                else:
+                    print(f"[PerTF] V2: No pattern found for {timeframe}")
+                    display_message = "No dominant pattern detected."
+                    
+            except Exception as e:
+                print(f"[PerTF] V2 pipeline error: {e}")
+                import traceback
+                traceback.print_exc()
+                pattern_render_contract = None
+                display_message = "Pattern analysis unavailable."
+        
+        # Display Gate for V2 patterns
+        if pattern_render_contract:
+            from modules.ta_engine.display_gate import get_display_gate
+            display_gate = get_display_gate()
+            
+            gate_result = display_gate.evaluate(pattern_render_contract)
+            
+            if gate_result.should_display:
+                print(f"[PerTF] ✅ Display Gate PASSED: {pattern_render_contract.get('type')}")
+                pattern_render_contract["display_approved"] = True
+                pattern_render_contract["display_gate_scores"] = gate_result.gate_scores
+            else:
+                print(f"[PerTF] ❌ Display Gate REJECTED: {gate_result.reason}")
+                # Keep pattern as candidate but mark as not displayable
+                pattern_render_contract["display_approved"] = False
+                pattern_render_contract["display_rejected_reason"] = gate_result.reason
+                display_message = gate_result.fallback_message
+                
+                # Don't show rejected pattern to user - set to None for rendering
+                # But keep in response as "candidate_pattern" for debugging
+                candidate_pattern = pattern_render_contract
+                pattern_render_contract = None
+                print(f"[PerTF] Fallback message: {display_message}")
+        else:
+            display_message = "Market structure is developing. No dominant pattern detected."
+        
+        # =============================================
+        # STEP 6: INDICATORS & TA CONTEXT
+        # =============================================
+        print(f"[PerTF] Step 6: Indicators...")
+        indicator_engine = get_indicator_engine()
+        indicator_result = indicator_engine.analyze_all(candles)
+        
+        # Convert indicator results to dict format expected by decision engine
+        indicator_signals = [s.to_dict() if hasattr(s, 'to_dict') else s for s in indicator_result] if indicator_result else []
+        
+        # Count bullish/bearish signals
+        bullish_count = sum(1 for s in indicator_signals if s.get('bias') == 'bullish')
+        bearish_count = sum(1 for s in indicator_signals if s.get('bias') == 'bearish')
+        neutral_count = len(indicator_signals) - bullish_count - bearish_count
+        
+        # Compute indicator visualization data (overlays + panes for chart)
+        print(f"[PerTF] Step 6b: Indicator visualization...")
+        indicator_viz_engine = get_indicator_viz_engine()
+        indicators_viz = indicator_viz_engine.compute_all(candles)
+        
+        # Compute indicator insights (interpretations for Research view)
+        print(f"[PerTF] Step 6c: Indicator insights...")
+        insights_engine = get_indicator_insights_engine()
+        indicator_insights = insights_engine.analyze(indicators_viz.get("panes", []))
+        
+        # Build TA context with proper structure
+        ta_context = {
+            "regime": structure_context.regime if structure_context else "unknown",
+            "bias": structure_context.bias if structure_context else "neutral",
+            "indicators": {
+                "total": len(indicator_signals),
+                "bullish": bullish_count,
+                "bearish": bearish_count,
+                "neutral": neutral_count,
+                "signals": indicator_signals,
+            },
+            "pattern": primary_pattern.to_dict() if primary_pattern else None,
+        }
+        
+        # =============================================
+        # STEP 7: DECISION ENGINE
+        # =============================================
+        print(f"[PerTF] Step 7: Decision engine...")
+        decision_engine = get_decision_engine_v2()
+        decision = decision_engine.build(
+            mtf_context=mtf_context or {},
+            structure_context=structure_context_dict,
+            primary_pattern=primary_pattern.to_dict() if primary_pattern else None,
+            ta_context=ta_context,
+        )
+        
+        # =============================================
+        # STEP 8: UNIFIED SETUP & TRADE SETUP
+        # =============================================
+        print(f"[PerTF] Step 8: Unified setup...")
+        unified_engine = get_unified_setup_engine()
+        unified_setup = unified_engine.build(
+            decision=decision,
+            structure_context=structure_context_dict,
+            liquidity=liquidity,
+            displacement=displacement,
+            choch_validation=choch_validation,
+            poi=poi,
+            fib=fib,
+            active_pattern=primary_pattern.to_dict() if primary_pattern else None,
+            ta_context=ta_context,
+            current_price=current_price,
+        )
+        
+        trade_setup_gen = get_trade_setup_generator()
+        trade_setup = trade_setup_gen.build(
+            decision=decision,
+            scenarios=[],  # No scenarios in per-TF mode
+            base_layer={},
+            structure_context=structure_context_dict,
+            current_price=current_price,
+        )
+        
+        # =============================================
+        # STEP 9: EXECUTION LAYER
+        # =============================================
+        print(f"[PerTF] Step 9: Execution layer...")
+        execution_layer = get_execution_layer()
+        
+        # Use MTF context if provided, otherwise create simple context
+        exec_mtf_context = mtf_context or {
+            "alignment": "mixed",
+            "tradeability": "medium",
+        }
+        
+        execution = execution_layer.build(
+            mtf_context=exec_mtf_context,
+            unified_setup=unified_setup,
+            trade_setup=trade_setup,
+            active_pattern=primary_pattern.to_dict() if primary_pattern else None,
+            poi=poi,
+            fib=fib,
+            current_price=current_price,
+        )
+        print(f"[PerTF] Execution status: {execution.get('status')}")
+        
+        # =============================================
+        # STEP 10: BUILD CHAIN MAP (for highlighting)
+        # =============================================
+        print(f"[PerTF] Step 10: Chain map...")
+        chain_map = self._build_chain_map(
+            unified_setup=unified_setup,
+            liquidity=liquidity,
+            displacement=displacement,
+            choch_validation=choch_validation,
+            poi=poi,
+            primary_pattern=primary_pattern.to_dict() if primary_pattern else None,
+            candles=candles,
+        )
+        
+        # =============================================
+        # STEP 11: BUILD RENDER PLAN V2 (for clean chart rendering)
+        # =============================================
+        print(f"[PerTF] Step 11: Render plan v2...")
+        try:
+            # Compute market state
+            ms_engine = _get_market_state_engine()
+            market_state = ms_engine.analyze(candles)
+            
+            # Build structure visualization with swings
+            viz_builder = _get_structure_viz_builder()
+            structure_viz = viz_builder.build(
+                pivots_high=pivot_highs_raw,
+                pivots_low=pivot_lows_raw,
+                structure_context=structure_context_dict,
+                candles=candles,
+            )
+            
+            # Merge structure_context with visualization
+            events = structure_viz.get("events", [])
+            bos_event = next((e for e in events if "bos" in e.get("type", "")), None)
+            choch_event = next((e for e in events if "choch" in e.get("type", "")), None)
+            
+            structure_for_render = {
+                **structure_context_dict,
+                "swings": structure_viz.get("pivot_points", []),
+                "bos": bos_event,
+                "choch": choch_event,
+            }
+            
+            # Get patterns as list
+            patterns = []
+            if primary_pattern:
+                patterns.append(primary_pattern.to_dict())
+            
+            # Build render plan
+            rp_engine = _get_render_plan_engine()
+            render_plan = rp_engine.build(
+                timeframe=timeframe,
+                current_price=current_price,
+                market_state=market_state.to_dict(),
+                structure=structure_for_render,
+                indicators=indicators_viz,
+                patterns=patterns,
+                liquidity=liquidity,
+                execution=execution,
+                poi=poi,
+            )
+            print(f"[PerTF] Render plan built: swings={len(render_plan.get('structure', {}).get('swings', []))}")
+        except Exception as e:
+            print(f"[PerTF] Render plan error: {e}")
+            render_plan = None
+        
+        # =============================================
+        # ASSEMBLE RESULT
+        # =============================================
+        elapsed = time_module.time() - start_time
+        print(f"[PerTF] Build completed in {elapsed:.2f}s")
+        
+        # Get interpretation from InterpretationEngine
+        try:
+            from modules.ta_engine.interpretation.interpretation_engine import get_interpretation_engine
+            from modules.ta_engine.mtf_engine import MTFEngine
+            ie = get_interpretation_engine()
+            tf_role = MTFEngine.classify_tf(timeframe)
+            
+            # Build data dict for interpretation
+            interp_data = {
+                "trend": structure_context_dict.get("bias", "neutral"),
+                "regime": structure_context_dict.get("regime", "unknown"),
+                "pattern": primary_pattern.to_dict() if primary_pattern else None,
+                "structure": structure_context_dict,
+                "levels": (render_plan.get("levels", []) if render_plan else []),
+            }
+            interpretation = ie.interpret(tf_role, interp_data)
+            print(f"[PerTF] Interpretation: {interpretation[:80]}...")
+        except Exception as e:
+            print(f"[PerTF] Interpretation error: {e}")
+            interpretation = None
+        
+        return {
+            "timeframe": timeframe,
+            "symbol": symbol,
+            "candles": candles,
+            "candle_count": len(candles),
+            "current_price": current_price,
+            
+            # INTERPRETATION — human-readable TA analysis
+            "interpretation": interpretation,
+            
+            # Structure (use dict, not object)
+            "structure_context": structure_context_dict,
+            "structure_state": structure_state.to_dict() if hasattr(structure_state, 'to_dict') else structure_state,
+            
+            # Smart Money
+            "liquidity": liquidity,
+            "displacement": displacement,
+            "choch_validation": choch_validation,
+            "poi": poi,
+            "fib": fib,
+            
+            # Patterns — RENDER CONTRACT V4
+            "primary_pattern": primary_pattern.to_dict() if primary_pattern else None,
+            "pattern_geometry": normalize_pattern_geometry(primary_pattern.to_dict()) if primary_pattern else None,
+            "pattern_render_contract": self._clean_pattern_for_response(pattern_render_contract),  # NEW: render-ready geometry (None if rejected)
+            "alternative_patterns": [a.to_dict() for a in alternatives] if alternatives else [],
+            "alternative_render_contracts": [self._clean_pattern_for_response(a) for a in alt_render_contracts],  # NEW: alternatives render-ready
+            
+            # Display Gate result
+            "display_message": display_message,  # Fallback message when no pattern shown
+            "candidate_pattern": self._clean_pattern_for_response(candidate_pattern),  # Pattern that failed gate (cleaned)
+            
+            # Indicators (convert IndicatorSignal objects to dicts)
+            "indicator_result": [s.to_dict() if hasattr(s, 'to_dict') else s for s in indicator_result] if indicator_result else [],
+            "indicators": indicators_viz,  # {overlays: [...], panes: [...]} for chart rendering
+            "indicator_insights": indicator_insights.to_dict(),  # RSI/MACD interpretations for Research
+            "ta_context": ta_context,
+            
+            # Decision & Setup
+            "decision": decision,
+            "unified_setup": unified_setup,
+            "trade_setup": trade_setup,
+            "execution": execution,
+            
+            # Chain highlighting
+            "chain_map": chain_map,
+            
+            # RENDER PLAN V2 — for clean chart rendering
+            "render_plan": render_plan,
+            
+            # Meta
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    
+
+    def _clean_pattern_for_response(self, pattern: Optional[Dict]) -> Optional[Dict]:
+        """
+        Clean pattern dict for JSON response.
+        
+        Removes internal keys (starting with _) and non-serializable objects.
+        """
+        if pattern is None:
+            return None
+        
+        cleaned = {}
+        for key, value in pattern.items():
+            # Skip internal keys
+            if key.startswith("_"):
+                continue
+            
+            # Skip callable objects (functions)
+            if callable(value):
+                continue
+            
+            # Recursively clean nested dicts
+            if isinstance(value, dict):
+                cleaned[key] = self._clean_pattern_for_response(value)
+            elif isinstance(value, list):
+                cleaned[key] = [
+                    self._clean_pattern_for_response(item) if isinstance(item, dict) else item
+                    for item in value
+                    if not callable(item)
+                ]
+            else:
+                cleaned[key] = value
+        
+        return cleaned
+
+    def _hard_filter_recency(self, candidates: List, candles: List[Dict]) -> List:
+        """Filter patterns that are too old."""
+        if not candidates or not candles:
+            return candidates
+        
+        total = len(candles)
+        filtered = []
+        
+        for c in candidates:
+            recency = (total - 1 - c.last_touch_index) / max(total, 1)
+            if recency > 0.35:
+                continue
+            if c.end_index < total * 0.7:
+                continue
+            filtered.append(c)
+        
+        return filtered
+    
+    def _build_chain_map(
+        self,
+        unified_setup: Dict[str, Any],
+        liquidity: Dict[str, Any],
+        displacement: Dict[str, Any],
+        choch_validation: Dict[str, Any],
+        poi: Dict[str, Any],
+        primary_pattern: Optional[Dict[str, Any]],
+        candles: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Build chain_map for chart highlighting.
+        
+        Maps each chain element to chart coordinates.
+        """
+        chain_map = []
+        chain = unified_setup.get("chain", [])
+        
+        # Map sweeps
+        sweeps = liquidity.get("sweeps", []) if liquidity else []
+        for sweep in sweeps[:2]:
+            chain_map.append({
+                "type": "sweep",
+                "label": sweep.get("label", "sweep"),
+                "direction": sweep.get("direction"),
+                "candle_index": sweep.get("candle_index"),
+                "price": sweep.get("price"),
+            })
+        
+        # Map displacement events
+        events = displacement.get("events", []) if displacement else []
+        for event in events[:2]:
+            chain_map.append({
+                "type": "displacement",
+                "direction": event.get("direction"),
+                "start_index": event.get("start_index"),
+                "end_index": event.get("end_index"),
+                "impulse": event.get("impulse"),
+            })
+        
+        # Map CHOCH
+        if choch_validation and choch_validation.get("is_valid"):
+            chain_map.append({
+                "type": "choch",
+                "direction": choch_validation.get("direction"),
+                "price": choch_validation.get("price"),
+                "candle_index": choch_validation.get("candle_index"),
+            })
+        
+        # Map POI zones
+        zones = poi.get("zones", []) if poi else []
+        for zone in zones[:3]:
+            chain_map.append({
+                "type": "poi",
+                "zone_type": zone.get("type"),
+                "price_low": zone.get("price_low", zone.get("lower")),
+                "price_high": zone.get("price_high", zone.get("upper")),
+            })
+        
+        # Map pattern
+        if primary_pattern:
+            chain_map.append({
+                "type": "pattern",
+                "pattern_type": primary_pattern.get("type"),
+                "direction_bias": primary_pattern.get("direction_bias"),
+                "breakout_level": primary_pattern.get("breakout_level"),
+                "invalidation": primary_pattern.get("invalidation"),
+            })
+        
+        return chain_map
+
+    # ═══════════════════════════════════════════════════════════════
+    # HTF CONTEXT BUILDER — For 1M/6M/1Y timeframes
+    # ═══════════════════════════════════════════════════════════════
+    
+    def _build_htf_context(
+        self,
+        candles: List[Dict[str, Any]],
+        symbol: str,
+        timeframe: str
+    ) -> Dict[str, Any]:
+        """
+        Build HTF context for macro timeframes (1M, 6M, 1Y).
+        
+        Uses HTF Context Engine instead of pattern detection.
+        Returns macro context, NOT forced patterns.
+        """
+        from modules.ta_engine.htf_context_engine import get_htf_context_engine
+        
+        htf_engine = get_htf_context_engine()
+        htf_context = htf_engine.build_context(candles, timeframe)
+        
+        current_price = float(candles[-1]["close"]) if candles else 0
+        
+        # Build render_plan for HTF (simplified)
+        render_plan = {
+            "timeframe": timeframe,
+            "current_price": current_price,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "render_mode": "htf_context_mode",
+            "market_state": {
+                "trend": htf_context.get("trend", "unknown"),
+                "current_price": current_price,
+            },
+            "structure": {
+                "swings": [],  # HTF doesn't show minor swings
+                "trend": htf_context.get("trend"),
+            },
+            "levels": [
+                {
+                    "price": lvl["price"],
+                    "type": lvl["type"],
+                    "strength": lvl.get("touches", 1) / 3,  # Normalize
+                    "source": "htf_macro",
+                }
+                for lvl in htf_context.get("major_levels", [])
+            ],
+            "liquidity": None,
+            "execution": None,
+        }
+        
+        # Build interpretation for display
+        interpretation = htf_context.get("interpretation", f"{timeframe} analysis")
+        
+        return {
+            "timeframe": timeframe,
+            "symbol": symbol,
+            "candles": candles,
+            "candle_count": len(candles),
+            "current_price": current_price,
+            "interpretation": interpretation,
+            
+            # HTF Context (NEW)
+            "htf_context": htf_context,
+            "is_htf": True,
+            
+            # Structure (from HTF context)
+            "structure_context": {
+                "type": htf_context.get("trend", "unknown"),
+                "trend_direction": htf_context.get("trend"),
+                "is_htf": True,
+                "macro_structure": htf_context.get("macro_structure"),
+            },
+            "structure_state": {
+                "direction": htf_context.get("trend"),
+                "is_htf": True,
+            },
+            
+            # Levels (from HTF context)
+            "liquidity": None,  # HTF doesn't track micro liquidity
+            "displacement": None,
+            "choch_validation": None,
+            "poi": None,
+            "fib": None,
+            
+            # Pattern — HTF does NOT force patterns
+            "primary_pattern": None,
+            "pattern_geometry": None,
+            "pattern_render_contract": None,
+            "alternative_patterns": [],
+            "alternative_render_contracts": [],
+            
+            # Indicators (minimal for HTF)
+            "indicator_result": [],
+            "indicators": {"overlays": [], "panes": []},
+            "indicator_insights": {},
+            
+            # Decision (from HTF context)
+            "ta_context": {
+                "role": "HTF",
+                "timeframe": timeframe,
+                "trend": htf_context.get("trend"),
+                "confidence": htf_context.get("confidence", 0),
+            },
+            "decision": {
+                "direction": "context_only",  # HTF provides context, not trading direction
+                "confidence": htf_context.get("confidence", 0),
+                "rationale": interpretation,
+                "is_htf_context": True,
+            },
+            
+            # No trade setup for HTF
+            "unified_setup": {"valid": False, "direction": "context_only", "chain": []},
+            "trade_setup": {"primary": None},
+            "execution": {"valid": False, "is_htf": True},
+            
+            # Render plan
+            "render_plan": render_plan,
+            "chain_map": [],
+            
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    
+    def _empty_result(self, timeframe: str, symbol: str) -> Dict[str, Any]:
+        """Return empty result template."""
+        return {
+            "timeframe": timeframe,
+            "symbol": symbol,
+            "candles": [],
+            "candle_count": 0,
+            "current_price": 0,
+            "structure_context": None,
+            "liquidity": None,
+            "displacement": None,
+            "choch_validation": None,
+            "poi": None,
+            "fib": None,
+            "primary_pattern": None,
+            "alternative_patterns": [],
+            "indicator_result": None,
+            "indicators": {"overlays": [], "panes": []},  # Empty renderable indicators
+            "indicator_insights": {},  # Empty insights
+            "ta_context": None,
+            "decision": None,
+            "unified_setup": {"valid": False, "direction": "no_trade", "chain": []},
+            "trade_setup": None,
+            "execution": {"valid": False},
+            "chain_map": [],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+# Factory
+_per_tf_builder = None
+
+def get_per_timeframe_builder() -> PerTimeframeBuilder:
+    global _per_tf_builder
+    if _per_tf_builder is None:
+        _per_tf_builder = PerTimeframeBuilder()
+    return _per_tf_builder

@@ -1,0 +1,133 @@
+{
+  "summary": {
+    "tests_run": 9,
+    "tests_passed": 9,
+    "success_rate": 100.0,
+    "critical_issues": []
+  },
+  "test_results": {
+    "health": true,
+    "ta_engine_1d": true,
+    "ta_engine_4h": true,
+    "history_scanner": true,
+    "display_gate": true
+  },
+  "detailed_results": [
+    {
+      "test_name": "Health Check",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.398209",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 103,
+        "url": "http://localhost:8001/api/health"
+      }
+    },
+    {
+      "test_name": "TA Engine MTF BTC 1D",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.529695",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 169276,
+        "url": "http://localhost:8001/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "TA Engine MTF BTC 4H",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.556030",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 201658,
+        "url": "http://localhost:8001/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "HistoryScanner Activity Check (1D)",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.578030",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 169276,
+        "url": "http://localhost:8001/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "HistoryScanner Activity Check (4H)",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.603703",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 201658,
+        "url": "http://localhost:8001/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "HistoryScanner Activity",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.603855",
+      "details": {
+        "evidence": [
+          "Found V8_HISTORY_SCAN engine (HistoryScanner)",
+          "Found HISTORY_SCAN_V8 source (HistoryScanner)",
+          "Found window with 50 candles"
+        ]
+      }
+    },
+    {
+      "test_name": "Display Gate Check (1D)",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.625597",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 169276,
+        "url": "http://localhost:8001/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "Display Gate Check (4H)",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.651228",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 201658,
+        "url": "http://localhost:8001/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "Display Gate Patterns Found",
+      "success": true,
+      "timestamp": "2026-03-23T20:32:41.651569",
+      "details": {
+        "patterns_found": [
+          {
+            "timeframe": "1D",
+            "type": "falling_wedge",
+            "combined_score": 0.9855,
+            "touch_score": 0.971,
+            "render_quality": 1.0,
+            "display_approved": true
+          },
+          {
+            "timeframe": "4H",
+            "type": "ascending_channel",
+            "combined_score": 0.9975,
+            "touch_score": 0.995,
+            "render_quality": 1.0,
+            "display_approved": true
+          }
+        ],
+        "note": "Patterns found but scores too high to demonstrate lowered thresholds"
+      }
+    }
+  ],
+  "timestamp": "2026-03-23T20:32:41.651719"
+}
