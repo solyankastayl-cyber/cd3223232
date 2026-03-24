@@ -965,8 +965,9 @@ const ResearchChart = ({
 
     // ═══════════════════════════════════════════════════════════════
     // PATTERN V2 GEOMETRY — Production Pattern Lines
+    // Skip if SVG overlay is active (to avoid duplication)
     // ═══════════════════════════════════════════════════════════════
-    if (patternV2?.primary_pattern?.lines?.length > 0) {
+    if (patternV2?.primary_pattern?.lines?.length > 0 && !hasPatternOverlay) {
       const primary = patternV2.primary_pattern;
       const patternColor = primary.direction_bias === 'bullish' ? '#22c55e' : 
                           primary.direction_bias === 'bearish' ? '#ef4444' : '#8b5cf6';
@@ -1029,8 +1030,10 @@ const ResearchChart = ({
 
     // ═══════════════════════════════════════════════════════════════
     // FIBONACCI LEVELS — Retracement & Extension Lines
+    // Skip if pattern overlay is active (to avoid visual clutter)
     // ═══════════════════════════════════════════════════════════════
-    if (fibonacci?.fib_levels_for_chart?.length > 0 && mapped.length > 0) {
+    const hasPatternOverlay = !!data?.pattern_render_contract;
+    if (fibonacci?.fib_levels_for_chart?.length > 0 && mapped.length > 0 && !hasPatternOverlay) {
       const parseTime = (t) => t > 1e12 ? Math.floor(t / 1000) : t;
       const lastTime = mapped[mapped.length - 1].time;
       
