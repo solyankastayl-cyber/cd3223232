@@ -1,672 +1,266 @@
 /**
- * PatternSVGOverlay.jsx (V4 — Render Profile Support)
+ * PatternSVGOverlay.jsx — CLEAN VERSION
  * 
- * Упрощённый рендер с поддержкой render_profile от backend.
- * 
- * ГЛАВНЫЕ ПРАВИЛА:
- * - loose patterns → minimal (только body, без projection)
- * - strict forming → compact (body + bounds, без projection)
- * - strict confirmed → full (всё включено)
- * 
- * Render Modes:
- * - Double Top/Bottom: M-shape + neckline (compact)
- * - Range: Rectangle only (box)
- * - Triangle/Wedge: Lines only (clean)
+ * Простой SVG overlay для паттернов:
+ * - Double Top/Bottom: M-shape + neckline
+ * - Range: Rectangle box
+ * - Triangle/Wedge: Two lines
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
 
 const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
-  const [svgData, setSvgData] = useState(null);
+  const [svgElements, setSvgElements] = useState([]);
   
-  // ═══════════════════════════════════════════════════════════════
-  // DEBUG — Log component mount and props
-  // ═══════════════════════════════════════════════════════════════
-  
-  // Get sample candle time for comparison
-  let sampleCandleTime = null;
-  try {
-    const data = priceSeries?.data?.();
-    if (data && data.length > 0) {
-      sampleCandleTime = data[0].time;
-    }
-  } catch (e) {
-    // Series may not have data() method
-  }
-  
-  // Get first pattern point time
-  const patternAnchors = renderContract?.anchors;
-  let patternTime = null;
-  if (patternAnchors) {
-    if (Array.isArray(patternAnchors) && patternAnchors.length > 0) {
-      patternTime = patternAnchors[0]?.time;
-    } else if (patternAnchors.p1) {
-      patternTime = patternAnchors.p1?.time;
-    }
-  }
-  
-  console.log("[PatternSVGOverlay] === MOUNT DEBUG ===", {
-    hasChart: !!chart,
-    hasSeries: !!priceSeries,
-    hasRenderContract: !!renderContract,
-    patternType: renderContract?.type,
-    patternMode: renderContract?.mode,
-    // CRITICAL: Time format comparison
-    sampleCandleTime,
-    patternTime,
-    timeMismatch: patternTime && sampleCandleTime ? 
-      (patternTime > 9999999999 && sampleCandleTime < 9999999999 ? "PATTERN IN MS, CANDLE IN S" :
-       patternTime < 9999999999 && sampleCandleTime > 9999999999 ? "PATTERN IN S, CANDLE IN MS" : "OK") : "UNKNOWN",
-    // Points check
-    hasStructurePoints: !!renderContract?.projection_contract?.structure?.points,
-    hasAnchors: !!renderContract?.anchors,
-    anchorsSample: patternAnchors ? 
-      (Array.isArray(patternAnchors) ? patternAnchors.slice(0, 2) : {p1: patternAnchors.p1, p2: patternAnchors.p2}) : null,
-  });
-  
-  const calculateCoordinates = useCallback(() => {
-    if (!chart || !renderContract || !priceSeries) {
-      console.log("[PatternSVGOverlay] calculateCoordinates SKIP - missing deps", {
-        chart: !!chart,
-        renderContract: !!renderContract,
-        priceSeries: !!priceSeries
-      });
-      return null;
+  // Build SVG elements from pattern data
+  const buildElements = useCallback(() => {
+    if (!chart || !priceSeries || !renderContract) {
+      return [];
     }
     
     try {
       const timeScale = chart.timeScale();
-      if (!timeScale) {
-        console.log("[PatternSVGOverlay] No timeScale!");
-        return null;
-      }
+      if (!timeScale) return [];
       
-      // ═══════════════════════════════════════════════════════════════
-      // TIME NORMALIZATION — Critical fix for milliseconds vs seconds
-      // ═══════════════════════════════════════════════════════════════
+      // Time normalization (ms → s)
       const normalizeTime = (t) => {
         if (!t) return t;
-        if (t > 9999999999) return Math.floor(t / 1000); // ms → s
-        return t;
+        return t > 9999999999 ? Math.floor(t / 1000) : t;
       };
-      
-      // Track first coord conversion for debug
-      let firstCoordLogged = false;
       
       // Coordinate converters
-      const toX = (time) => {
-        const t = normalizeTime(time);
-        const x = timeScale.timeToCoordinate(t);
-        if (!firstCoordLogged) {
-          console.log("[PatternSVGOverlay] First toX:", { originalTime: time, normalizedTime: t, x });
-        }
-        return x;
-      };
-      
+      const toX = (time) => timeScale.timeToCoordinate(normalizeTime(time));
       const toY = (price) => {
         try {
-          const y = priceSeries.priceToCoordinate(price);
-          if (!firstCoordLogged) {
-            console.log("[PatternSVGOverlay] First toY:", { price, y });
-            firstCoordLogged = true;
-          }
-          return y;
-        } catch (e) {
-          console.log("[PatternSVGOverlay] toY ERROR:", e);
+          return priceSeries.priceToCoordinate(price);
+        } catch {
           return null;
         }
-      };
-      
-      const toXY = (p) => {
-        if (!p) return null;
-        const x = toX(p.time);
-        const y = toY(p.price);
-        if (x === null || y === null) {
-          console.log("[PatternSVGOverlay] NULL coords for point:", p, "→", { x, y });
-          return null;
-        }
-        return { x, y };
       };
       
       const patternType = renderContract.type || '';
-      const mode = renderContract.mode || 'strict';
-      
-      // Get render profile from backend (or use defaults)
-      const profile = renderContract.render_profile || {
-        draw_structure: true,
-        draw_fill: mode !== 'loose',
-        draw_bounds: true,
-        draw_completion: false,
-        draw_projection: false,
-        draw_labels: false,
-        draw_stage: false,
-        stroke_width: mode === 'loose' ? 1.5 : 2.0,
-        fill_opacity: mode === 'loose' ? 0.05 : 0.1,
-        use_dashed: mode === 'loose',
-      };
-      
-      // Get projection data (may be null if profile disables it)
-      const projection = profile.draw_projection ? 
-        (renderContract.projection_contract || renderContract.projection) : null;
+      const anchors = renderContract.anchors || {};
+      const meta = renderContract.meta || {};
       
       // ═══════════════════════════════════════════════════════════════
-      // DOUBLE TOP / DOUBLE BOTTOM — COMPACT MODE
+      // DOUBLE TOP / DOUBLE BOTTOM
       // ═══════════════════════════════════════════════════════════════
       if (patternType === 'double_top' || patternType === 'double_bottom') {
-        return buildDoubleTopCompact(renderContract, profile, projection, toX, toY, toXY);
+        const isTop = patternType === 'double_top';
+        const color = isTop ? '#ef4444' : '#22c55e';
+        
+        // Get points
+        let p1, valley, p2;
+        
+        if (anchors.p1 && anchors.p2) {
+          p1 = anchors.p1;
+          p2 = anchors.p2;
+          valley = anchors.valley;
+        } else if (Array.isArray(renderContract.anchors)) {
+          const arr = renderContract.anchors;
+          if (arr.length >= 2) {
+            const sorted = [...arr].sort((a, b) => isTop ? b.price - a.price : a.price - b.price);
+            const peaks = sorted.slice(0, 2).sort((a, b) => a.time - b.time);
+            p1 = peaks[0];
+            p2 = peaks[1];
+          }
+        }
+        
+        if (!p1 || !p2) return [];
+        
+        // Get neckline
+        const neckline = meta.neckline || 
+                        (valley ? valley.price : null) ||
+                        (isTop ? Math.min(p1.price, p2.price) * 0.98 : Math.max(p1.price, p2.price) * 1.02);
+        
+        // Create valley if not provided
+        if (!valley) {
+          valley = {
+            time: (p1.time + p2.time) / 2,
+            price: neckline
+          };
+        }
+        
+        // Convert to screen coords
+        const x1 = toX(p1.time);
+        const y1 = toY(p1.price);
+        const xV = toX(valley.time);
+        const yV = toY(valley.price);
+        const x2 = toX(p2.time);
+        const y2 = toY(p2.price);
+        const yNeck = toY(neckline);
+        
+        // Check validity
+        if ([x1, y1, xV, yV, x2, y2, yNeck].some(v => v === null || v === undefined)) {
+          console.log('[PatternSVGOverlay] Double top coords invalid:', { x1, y1, xV, yV, x2, y2, yNeck });
+          return [];
+        }
+        
+        const elements = [];
+        
+        // 1. M-shape polyline (P1 → Valley → P2)
+        elements.push(
+          <polyline
+            key="mshape"
+            points={`${x1},${y1} ${xV},${yV} ${x2},${y2}`}
+            fill="none"
+            stroke={color}
+            strokeWidth={3}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        );
+        
+        // 2. Neckline (dashed horizontal)
+        elements.push(
+          <line
+            key="neckline"
+            x1={Math.min(x1, x2) - 30}
+            y1={yNeck}
+            x2={Math.max(x1, x2) + 50}
+            y2={yNeck}
+            stroke="#00bfff"
+            strokeWidth={2}
+            strokeDasharray="8 4"
+          />
+        );
+        
+        // 3. Peak markers
+        elements.push(
+          <circle key="p1" cx={x1} cy={y1} r={5} fill={color} stroke="#fff" strokeWidth={2} />
+        );
+        elements.push(
+          <circle key="p2" cx={x2} cy={y2} r={5} fill={color} stroke="#fff" strokeWidth={2} />
+        );
+        elements.push(
+          <circle key="valley" cx={xV} cy={yV} r={4} fill="#00bfff" stroke="#fff" strokeWidth={1.5} />
+        );
+        
+        // 4. Labels
+        elements.push(
+          <text key="p1-label" x={x1} y={y1 - 12} fill={color} fontSize="11" fontWeight="bold" textAnchor="middle">P1</text>
+        );
+        elements.push(
+          <text key="p2-label" x={x2} y={y2 - 12} fill={color} fontSize="11" fontWeight="bold" textAnchor="middle">P2</text>
+        );
+        elements.push(
+          <text key="v-label" x={xV} y={yV + 16} fill="#00bfff" fontSize="10" fontWeight="bold" textAnchor="middle">V</text>
+        );
+        
+        return elements;
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // RANGE — BOX MODE
+      // RANGE
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('range') || patternType.includes('channel')) {
-        return buildRangeBox(renderContract, profile, projection, toX, toY);
+        const bounds = renderContract.bounds || {};
+        const boundaries = meta.boundaries || {};
+        
+        const resistance = bounds.top || meta.resistance || boundaries.upper?.y1;
+        const support = bounds.bottom || meta.support || boundaries.lower?.y1;
+        const startTime = boundaries.upper?.x1 || boundaries.lower?.x1;
+        const endTime = boundaries.upper?.x2 || boundaries.lower?.x2;
+        
+        if (!resistance || !support || !startTime || !endTime) return [];
+        
+        const xStart = toX(startTime);
+        const xEnd = toX(endTime);
+        const yTop = toY(resistance);
+        const yBot = toY(support);
+        
+        if ([xStart, xEnd, yTop, yBot].some(v => v === null)) return [];
+        
+        const elements = [];
+        
+        // Rectangle
+        elements.push(
+          <rect
+            key="box"
+            x={xStart}
+            y={yTop}
+            width={xEnd - xStart}
+            height={yBot - yTop}
+            fill="rgba(59, 130, 246, 0.1)"
+            stroke="#3b82f6"
+            strokeWidth={2}
+          />
+        );
+        
+        // R/S labels
+        elements.push(
+          <text key="r-label" x={xEnd + 8} y={yTop + 4} fill="#ef4444" fontSize="11" fontWeight="bold">R</text>
+        );
+        elements.push(
+          <text key="s-label" x={xEnd + 8} y={yBot + 4} fill="#22c55e" fontSize="11" fontWeight="bold">S</text>
+        );
+        
+        return elements;
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // TRIANGLE / WEDGE — CLEAN MODE
+      // TRIANGLE / WEDGE
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('triangle') || patternType.includes('wedge')) {
-        return buildTriangleClean(renderContract, profile, projection, toX, toY);
+        const boundaries = meta.boundaries || {};
+        const upper = boundaries.upper;
+        const lower = boundaries.lower;
+        
+        if (!upper || !lower) return [];
+        
+        const x1u = toX(upper.x1);
+        const y1u = toY(upper.y1);
+        const x2u = toX(upper.x2);
+        const y2u = toY(upper.y2);
+        const x1l = toX(lower.x1);
+        const y1l = toY(lower.y1);
+        const x2l = toX(lower.x2);
+        const y2l = toY(lower.y2);
+        
+        if ([x1u, y1u, x2u, y2u, x1l, y1l, x2l, y2l].some(v => v === null)) return [];
+        
+        const color = patternType.includes('wedge') 
+          ? (patternType.includes('falling') ? '#22c55e' : '#ef4444')
+          : '#00bfff';
+        
+        const elements = [];
+        
+        // Upper line
+        elements.push(
+          <line key="upper" x1={x1u} y1={y1u} x2={x2u} y2={y2u} stroke={color} strokeWidth={2.5} />
+        );
+        
+        // Lower line
+        elements.push(
+          <line key="lower" x1={x1l} y1={y1l} x2={x2l} y2={y2l} stroke={color} strokeWidth={2.5} />
+        );
+        
+        return elements;
       }
       
-      return null;
+      return [];
       
     } catch (err) {
       console.error('[PatternSVGOverlay] Error:', err);
-      return null;
+      return [];
     }
   }, [chart, priceSeries, renderContract]);
   
-  // ═══════════════════════════════════════════════════════════════
-  // DOUBLE TOP/BOTTOM — COMPACT (M + neckline only)
-  // ═══════════════════════════════════════════════════════════════
-  
-  const buildDoubleTopCompact = (contract, profile, projection, toX, toY, toXY) => {
-    const isDoubleTop = contract.type === 'double_top';
-    const patternColor = isDoubleTop ? '#ef4444' : '#22c55e';
-    const necklineColor = '#00bfff';
-    
-    // Get points
-    const anchors = contract.anchors || {};
-    let p1 = anchors.p1;
-    let valley = anchors.valley;
-    let p2 = anchors.p2;
-    
-    // Fallback to projection structure
-    if ((!p1 || !p2) && projection?.structure?.points) {
-      const pts = projection.structure.points;
-      if (pts.length >= 3) {
-        p1 = pts[0];
-        valley = pts[1];
-        p2 = pts[2];
-      }
-    }
-    
-    // Fallback to array anchors
-    if ((!p1 || !p2) && Array.isArray(contract.anchors)) {
-      const sorted = [...contract.anchors].sort((a, b) => 
-        isDoubleTop ? b.price - a.price : a.price - b.price
-      );
-      if (sorted.length >= 2) {
-        const peaks = sorted.slice(0, 2).sort((a, b) => a.time - b.time);
-        p1 = peaks[0];
-        p2 = peaks[1];
-        const necklinePrice = contract.meta?.neckline || contract.meta?.boundaries?.neckline;
-        valley = { time: (p1.time + p2.time) / 2, price: necklinePrice || p1.price * 0.97 };
-      }
-    }
-    
-    if (!p1 || !p2 || !valley) return null;
-    
-    // Convert to screen
-    const c1 = toXY(p1);
-    const cV = toXY(valley);
-    const c2 = toXY(p2);
-    
-    if (!c1 || !cV || !c2) return null;
-    
-    // Neckline
-    const neckline = projection?.bounds?.neckline || contract.meta?.neckline || valley.price;
-    const yNeck = toY(neckline);
-    if (yNeck === null) return null;
-    
-    const strokeWidth = profile.stroke_width || 2;
-    const fillOpacity = profile.fill_opacity || 0.1;
-    const useDashed = profile.use_dashed;
-    
-    const elements = [];
-    const gradientId = `grad-dt-${Date.now()}`;
-    
-    // Defs
-    if (profile.draw_fill) {
-      elements.push({
-        tag: 'defs',
-        props: { key: 'defs' },
-        children: [{
-          tag: 'linearGradient',
-          props: { id: gradientId, x1: '0%', y1: '0%', x2: '0%', y2: '100%' },
-          children: [
-            { tag: 'stop', props: { offset: '0%', stopColor: patternColor, stopOpacity: String(fillOpacity * 2) } },
-            { tag: 'stop', props: { offset: '100%', stopColor: patternColor, stopOpacity: String(fillOpacity * 0.3) } },
-          ]
-        }]
-      });
-    }
-    
-    // LAYER 1: STRUCTURE — M-shape
-    if (profile.draw_structure) {
-      // Fill (optional)
-      if (profile.draw_fill) {
-        elements.push({
-          tag: 'polygon',
-          props: {
-            key: 'fill',
-            points: `${c1.x},${yNeck} ${c1.x},${c1.y} ${cV.x},${cV.y} ${c2.x},${c2.y} ${c2.x},${yNeck}`,
-            fill: `url(#${gradientId})`,
-            stroke: 'none',
-          }
-        });
-      }
-      
-      // M-shape polyline
-      elements.push({
-        tag: 'polyline',
-        props: {
-          key: 'mshape',
-          points: `${c1.x},${c1.y} ${cV.x},${cV.y} ${c2.x},${c2.y}`,
-          fill: 'none',
-          stroke: patternColor,
-          strokeWidth: strokeWidth + 0.5,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          strokeDasharray: useDashed ? '6 4' : 'none',
-        }
-      });
-    }
-    
-    // LAYER 2: BOUNDS — Neckline only
-    if (profile.draw_bounds) {
-      elements.push({
-        tag: 'line',
-        props: {
-          key: 'neckline',
-          x1: Math.min(c1.x, c2.x) - 20,
-          y1: yNeck,
-          x2: Math.max(c1.x, c2.x) + 40,
-          y2: yNeck,
-          stroke: necklineColor,
-          strokeWidth: 1.5,
-          strokeDasharray: '6 3',
-        }
-      });
-    }
-    
-    // LAYER 3: COMPLETION (only if profile allows)
-    if (profile.draw_completion) {
-      elements.push({
-        tag: 'line',
-        props: {
-          key: 'completion',
-          x1: c2.x,
-          y1: c2.y,
-          x2: c2.x,
-          y2: yNeck,
-          stroke: '#666',
-          strokeWidth: 1,
-          strokeDasharray: '3 3',
-        }
-      });
-    }
-    
-    // LAYER 4: PROJECTION (only if profile allows AND we have data)
-    if (profile.draw_projection && projection?.projection?.primary) {
-      const primary = projection.projection.primary;
-      const yTarget = toY(primary.target);
-      
-      if (yTarget !== null) {
-        const arrowId = `arrow-${Date.now()}`;
-        
-        // Arrow marker
-        elements.push({
-          tag: 'defs',
-          props: { key: 'arrow-defs' },
-          children: [{
-            tag: 'marker',
-            props: {
-              id: arrowId,
-              markerWidth: '8',
-              markerHeight: '8',
-              refX: '5',
-              refY: '3',
-              orient: 'auto'
-            },
-            children: [{ tag: 'path', props: { d: 'M0,0 L0,6 L6,3 z', fill: necklineColor } }]
-          }]
-        });
-        
-        // Arrow line
-        elements.push({
-          tag: 'line',
-          props: {
-            key: 'proj-primary',
-            x1: c2.x + 8,
-            y1: yNeck,
-            x2: c2.x + 30,
-            y2: yTarget,
-            stroke: necklineColor,
-            strokeWidth: 2,
-            markerEnd: `url(#${arrowId})`,
-          }
-        });
-        
-        // Target label
-        elements.push({
-          tag: 'text',
-          props: {
-            key: 'target-label',
-            x: c2.x + 35,
-            y: yTarget + 4,
-            fill: necklineColor,
-            fontSize: '10px',
-            fontWeight: 'bold',
-          },
-          content: `${primary.target.toFixed(0)}`
-        });
-      }
-    }
-    
-    // Labels (only if profile allows)
-    if (profile.draw_labels) {
-      elements.push({
-        tag: 'text',
-        props: { key: 'p1-label', x: c1.x, y: c1.y - 10, fill: patternColor, fontSize: '10px', fontWeight: 'bold', textAnchor: 'middle' },
-        content: 'P1'
-      });
-      elements.push({
-        tag: 'text',
-        props: { key: 'p2-label', x: c2.x, y: c2.y - 10, fill: patternColor, fontSize: '10px', fontWeight: 'bold', textAnchor: 'middle' },
-        content: 'P2'
-      });
-    }
-    
-    return { type: 'double_top', elements };
-  };
-  
-  // ═══════════════════════════════════════════════════════════════
-  // RANGE — BOX MODE (rectangle only)
-  // ═══════════════════════════════════════════════════════════════
-  
-  const buildRangeBox = (contract, profile, projection, toX, toY) => {
-    // Get bounds
-    const bounds = projection?.bounds || contract.bounds || {};
-    const boundaries = contract.meta?.boundaries || {};
-    const upper = boundaries.upper || {};
-    const lower = boundaries.lower || {};
-    
-    const resistance = bounds.resistance || bounds.top || Math.max(upper.y1 || 0, upper.y2 || 0);
-    const support = bounds.support || bounds.bottom || Math.min(lower.y1 || 0, lower.y2 || 0);
-    
-    if (!resistance || !support || resistance <= support) return null;
-    
-    // Get window
-    const xStart = toX(upper.x1 || lower.x1 || contract.meta?.start_time);
-    const xEnd = toX(upper.x2 || lower.x2 || contract.meta?.end_time);
-    const yRes = toY(resistance);
-    const ySup = toY(support);
-    
-    if ([xStart, xEnd, yRes, ySup].some(v => v === null)) return null;
-    
-    const strokeWidth = profile.stroke_width || 1.5;
-    const fillOpacity = profile.fill_opacity || 0.08;
-    const useDashed = profile.use_dashed;
-    
-    const elements = [];
-    
-    // STRUCTURE — Rectangle
-    if (profile.draw_structure) {
-      elements.push({
-        tag: 'rect',
-        props: {
-          key: 'box',
-          x: xStart,
-          y: yRes,
-          width: Math.max(xEnd - xStart, 50),
-          height: Math.max(ySup - yRes, 10),
-          fill: profile.draw_fill ? `rgba(59, 130, 246, ${fillOpacity})` : 'none',
-          stroke: '#3b82f6',
-          strokeWidth: strokeWidth,
-          strokeDasharray: useDashed ? '6 4' : 'none',
-          rx: 3,
-          ry: 3,
-        }
-      });
-    }
-    
-    // BOUNDS — R/S lines
-    if (profile.draw_bounds) {
-      // Resistance
-      elements.push({
-        tag: 'line',
-        props: {
-          key: 'resistance',
-          x1: xStart - 10,
-          y1: yRes,
-          x2: xEnd + 20,
-          y2: yRes,
-          stroke: '#ef4444',
-          strokeWidth: 1.5,
-          strokeDasharray: '4 2',
-        }
-      });
-      
-      // Support
-      elements.push({
-        tag: 'line',
-        props: {
-          key: 'support',
-          x1: xStart - 10,
-          y1: ySup,
-          x2: xEnd + 20,
-          y2: ySup,
-          stroke: '#22c55e',
-          strokeWidth: 1.5,
-          strokeDasharray: '4 2',
-        }
-      });
-      
-      // R/S labels
-      elements.push({
-        tag: 'text',
-        props: { key: 'r-label', x: xEnd + 25, y: yRes + 4, fill: '#ef4444', fontSize: '11px', fontWeight: 'bold' },
-        content: 'R'
-      });
-      elements.push({
-        tag: 'text',
-        props: { key: 's-label', x: xEnd + 25, y: ySup + 4, fill: '#22c55e', fontSize: '11px', fontWeight: 'bold' },
-        content: 'S'
-      });
-    }
-    
-    // PROJECTION (only if allowed)
-    if (profile.draw_projection && projection?.projection?.primary) {
-      const primary = projection.projection.primary;
-      const yTarget = toY(primary.target);
-      
-      if (yTarget !== null) {
-        const arrowId = `arrow-range-${Date.now()}`;
-        
-        elements.push({
-          tag: 'defs',
-          props: { key: 'arrow-defs' },
-          children: [{
-            tag: 'marker',
-            props: { id: arrowId, markerWidth: '8', markerHeight: '8', refX: '5', refY: '3', orient: 'auto' },
-            children: [{ tag: 'path', props: { d: 'M0,0 L0,6 L6,3 z', fill: '#00bfff' } }]
-          }]
-        });
-        
-        elements.push({
-          tag: 'line',
-          props: {
-            key: 'proj-line',
-            x1: xEnd + 5,
-            y1: primary.direction === 'up' ? yRes : ySup,
-            x2: xEnd + 30,
-            y2: yTarget,
-            stroke: '#00bfff',
-            strokeWidth: 2,
-            markerEnd: `url(#${arrowId})`,
-          }
-        });
-      }
-    }
-    
-    return { type: 'range', elements };
-  };
-  
-  // ═══════════════════════════════════════════════════════════════
-  // TRIANGLE / WEDGE — CLEAN MODE (lines only)
-  // ═══════════════════════════════════════════════════════════════
-  
-  const buildTriangleClean = (contract, profile, projection, toX, toY) => {
-    const isWedge = contract.type.includes('wedge');
-    const isFalling = contract.type.includes('falling');
-    const lineColor = isWedge ? (isFalling ? '#22c55e' : '#ef4444') : '#00bfff';
-    
-    // Get boundaries
-    const boundaries = contract.meta?.boundaries || {};
-    const projBounds = projection?.bounds || {};
-    
-    const upper = projBounds.upper_line || boundaries.upper;
-    const lower = projBounds.lower_line || boundaries.lower;
-    
-    if (!upper || !lower) return null;
-    
-    // Convert to screen
-    const x1u = toX(upper.x1);
-    const y1u = toY(upper.y1);
-    const x2u = toX(upper.x2);
-    const y2u = toY(upper.y2);
-    const x1l = toX(lower.x1);
-    const y1l = toY(lower.y1);
-    const x2l = toX(lower.x2);
-    const y2l = toY(lower.y2);
-    
-    if ([x1u, y1u, x2u, y2u, x1l, y1l, x2l, y2l].some(v => v === null)) return null;
-    
-    const strokeWidth = profile.stroke_width || 2;
-    const fillOpacity = profile.fill_opacity || 0.08;
-    const useDashed = profile.use_dashed;
-    
-    const elements = [];
-    
-    // STRUCTURE
-    if (profile.draw_structure) {
-      // Fill (optional)
-      if (profile.draw_fill) {
-        elements.push({
-          tag: 'polygon',
-          props: {
-            key: 'fill',
-            points: `${x1u},${y1u} ${x2u},${y2u} ${x2l},${y2l} ${x1l},${y1l}`,
-            fill: `rgba(0, 191, 255, ${fillOpacity})`,
-            stroke: 'none',
-          }
-        });
-      }
-      
-      // Upper line
-      elements.push({
-        tag: 'line',
-        props: {
-          key: 'upper',
-          x1: x1u, y1: y1u, x2: x2u, y2: y2u,
-          stroke: lineColor,
-          strokeWidth: strokeWidth,
-          strokeDasharray: useDashed ? '6 4' : 'none',
-        }
-      });
-      
-      // Lower line
-      elements.push({
-        tag: 'line',
-        props: {
-          key: 'lower',
-          x1: x1l, y1: y1l, x2: x2l, y2: y2l,
-          stroke: lineColor,
-          strokeWidth: strokeWidth,
-          strokeDasharray: useDashed ? '6 4' : 'none',
-        }
-      });
-    }
-    
-    // Type label (only if allowed)
-    if (profile.draw_labels) {
-      const label = isWedge ? (isFalling ? 'FALLING' : 'RISING') : 'TRIANGLE';
-      elements.push({
-        tag: 'text',
-        props: { key: 'type-label', x: x1u, y: y1u - 8, fill: lineColor, fontSize: '10px', fontWeight: 'bold' },
-        content: label
-      });
-    }
-    
-    // PROJECTION (only if allowed)
-    if (profile.draw_projection && projection?.projection?.primary) {
-      const primary = projection.projection.primary;
-      const yTarget = toY(primary.target);
-      const startX = Math.max(x2u, x2l);
-      const startY = (y2u + y2l) / 2;
-      
-      if (yTarget !== null) {
-        const arrowId = `arrow-tri-${Date.now()}`;
-        
-        elements.push({
-          tag: 'defs',
-          props: { key: 'arrow-defs' },
-          children: [{
-            tag: 'marker',
-            props: { id: arrowId, markerWidth: '8', markerHeight: '8', refX: '5', refY: '3', orient: 'auto' },
-            children: [{ tag: 'path', props: { d: 'M0,0 L0,6 L6,3 z', fill: '#00bfff' } }]
-          }]
-        });
-        
-        elements.push({
-          tag: 'line',
-          props: {
-            key: 'proj',
-            x1: startX, y1: startY,
-            x2: startX + 40, y2: yTarget,
-            stroke: '#00bfff',
-            strokeWidth: 2,
-            markerEnd: `url(#${arrowId})`,
-          }
-        });
-      }
-    }
-    
-    return { type: 'triangle', elements };
-  };
-  
-  // ═══════════════════════════════════════════════════════════════
-  // UPDATE EFFECT
-  // ═══════════════════════════════════════════════════════════════
-  
+  // Update on chart changes
   useEffect(() => {
     if (!chart || !priceSeries || !renderContract) {
-      setSvgData(null);
+      setSvgElements([]);
       return;
     }
     
     const update = () => {
-      const data = calculateCoordinates();
-      setSvgData(data);
+      const elements = buildElements();
+      setSvgElements(elements);
     };
     
     update();
     
     const timeScale = chart.timeScale();
-    
     if (timeScale) {
       timeScale.subscribeVisibleTimeRangeChange(update);
     }
@@ -678,78 +272,12 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
       }
       chart.unsubscribeCrosshairMove(update);
     };
-  }, [chart, priceSeries, renderContract, calculateCoordinates]);
+  }, [chart, priceSeries, renderContract, buildElements]);
   
-  // ═══════════════════════════════════════════════════════════════
-  // RENDER — with DEBUG test line
-  // ═══════════════════════════════════════════════════════════════
-  
-  const renderElement = (el, idx) => {
-    if (!el || !el.tag) return null;
-    
-    const Tag = el.tag;
-    const key = el.props?.key || `el-${idx}`;
-    const props = { ...el.props, key };
-    
-    if (el.children && Array.isArray(el.children)) {
-      return (
-        <Tag {...props}>
-          {el.children.map((child, i) => renderElement(child, `${key}-${i}`))}
-        </Tag>
-      );
-    }
-    
-    if (el.content) {
-      return <Tag {...props}>{el.content}</Tag>;
-    }
-    
-    return <Tag {...props} />;
-  };
-  
-  // DEBUG: Always render test elements to verify SVG is mounted
-  const hasElements = svgData && svgData.elements && svgData.elements.length > 0;
-  
-  // Try to get a real coordinate for debug test line
-  let debugTestCoord = null;
-  try {
-    if (chart && priceSeries && renderContract?.anchors) {
-      const timeScale = chart.timeScale();
-      const anchors = renderContract.anchors;
-      
-      // Get first anchor point
-      let testPoint = null;
-      if (Array.isArray(anchors) && anchors.length > 0) {
-        testPoint = anchors[0];
-      } else if (anchors.p1) {
-        testPoint = anchors.p1;
-      }
-      
-      if (testPoint && testPoint.time && testPoint.price) {
-        // Normalize time
-        let t = testPoint.time;
-        if (t > 9999999999) t = Math.floor(t / 1000);
-        
-        const x = timeScale.timeToCoordinate(t);
-        const y = priceSeries.priceToCoordinate(testPoint.price);
-        
-        if (x !== null && y !== null) {
-          debugTestCoord = { x, y, point: testPoint };
-          console.log("[PatternSVGOverlay] DEBUG TEST COORD SUCCESS:", debugTestCoord);
-        } else {
-          console.log("[PatternSVGOverlay] DEBUG TEST COORD FAILED - null coords:", { x, y, testPoint, normalizedTime: t });
-        }
-      }
-    }
-  } catch (e) {
-    console.log("[PatternSVGOverlay] DEBUG TEST COORD ERROR:", e);
+  // Don't render if no elements
+  if (!svgElements || svgElements.length === 0) {
+    return null;
   }
-  
-  console.log("[PatternSVGOverlay] RENDER:", {
-    hasElements,
-    svgDataType: svgData?.type,
-    elementCount: svgData?.elements?.length,
-    debugTestCoord: debugTestCoord ? `(${debugTestCoord.x?.toFixed(0)}, ${debugTestCoord.y?.toFixed(0)})` : "NONE"
-  });
   
   return (
     <svg
@@ -762,52 +290,9 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         pointerEvents: 'none',
         overflow: 'visible',
         zIndex: 50,
-        border: '2px solid lime', // DEBUG: visible border
       }}
     >
-      {/* DEBUG: Static test line (always at 50,50) */}
-      <line 
-        x1="50" 
-        y1="50" 
-        x2="200" 
-        y2="150" 
-        stroke="red" 
-        strokeWidth="4" 
-      />
-      <text x="60" y="40" fill="red" fontSize="12" fontWeight="bold">
-        STATIC TEST
-      </text>
-      
-      {/* DEBUG: Dynamic test circle at first anchor coords (should follow chart) */}
-      {debugTestCoord && (
-        <>
-          <circle 
-            cx={debugTestCoord.x} 
-            cy={debugTestCoord.y} 
-            r="15" 
-            fill="yellow" 
-            stroke="black" 
-            strokeWidth="3"
-          />
-          <text 
-            x={debugTestCoord.x + 20} 
-            y={debugTestCoord.y} 
-            fill="yellow" 
-            fontSize="12" 
-            fontWeight="bold"
-            stroke="black"
-            strokeWidth="0.5"
-          >
-            ANCHOR P1
-          </text>
-        </>
-      )}
-      <text x="60" y="40" fill="red" fontSize="12" fontWeight="bold">
-        SVG OVERLAY TEST
-      </text>
-      
-      {/* Real pattern elements */}
-      {hasElements && svgData.elements.map((el, idx) => renderElement(el, idx))}
+      {svgElements}
     </svg>
   );
 };
