@@ -72,8 +72,9 @@ const PatternBadge = styled.span`
 
 const ConfidenceBar = styled.div`
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 `;
 
 const ConfidenceValue = styled.span`
@@ -91,6 +92,50 @@ const ConfidenceLabel = styled.span`
   color: #94a3b8;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+`;
+
+// NEW: Visual confidence progress bar
+const ProgressBarContainer = styled.div`
+  width: 80px;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+`;
+
+const ProgressBarFill = styled.div`
+  height: 100%;
+  width: ${({ $value }) => $value}%;
+  background: ${({ $value }) => 
+    $value >= 70 ? '#05A584' :
+    $value >= 50 ? '#F59E0B' :
+    '#94a3b8'
+  };
+  border-radius: 3px;
+  transition: width 0.3s ease;
+`;
+
+// NEW: Mode badge (STRICT vs LOOSE visual difference)
+const ModeBadge = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 8px;
+  
+  ${({ $mode }) => $mode === 'strict' ? `
+    background: rgba(59, 130, 246, 0.15);
+    color: #3B82F6;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  ` : `
+    background: rgba(148, 163, 184, 0.1);
+    color: #64748b;
+    border: 1px dashed rgba(148, 163, 184, 0.5);
+  `}
 `;
 
 const Body = styled.div`
@@ -217,6 +262,26 @@ const PatternShapes = {
       <line x1="5" y1="25" x2="55" y2="25" stroke="#EF4444" strokeWidth="1" strokeDasharray="2,2" />
     </svg>
   ),
+  // NEW: Loose patterns (dashed style)
+  loose_range: (
+    <svg width="60" height="40" viewBox="0 0 60 40">
+      <line x1="5" y1="12" x2="55" y2="12" stroke="#64748B" strokeWidth="1.5" strokeDasharray="4,3" />
+      <line x1="5" y1="28" x2="55" y2="28" stroke="#64748B" strokeWidth="1.5" strokeDasharray="4,3" />
+      <rect x="5" y="12" width="50" height="16" fill="rgba(100,116,139,0.08)" />
+    </svg>
+  ),
+  loose_wedge: (
+    <svg width="60" height="40" viewBox="0 0 60 40">
+      <line x1="5" y1="5" x2="55" y2="18" stroke="#64748B" strokeWidth="1.5" strokeDasharray="4,3" />
+      <line x1="5" y1="35" x2="55" y2="22" stroke="#64748B" strokeWidth="1.5" strokeDasharray="4,3" />
+    </svg>
+  ),
+  loose_triangle: (
+    <svg width="60" height="40" viewBox="0 0 60 40">
+      <line x1="5" y1="5" x2="55" y2="18" stroke="#64748B" strokeWidth="1.5" strokeDasharray="4,3" />
+      <line x1="5" y1="35" x2="55" y2="22" stroke="#64748B" strokeWidth="1.5" strokeDasharray="4,3" />
+    </svg>
+  ),
   structure: (
     <svg width="60" height="40" viewBox="0 0 60 40">
       <polyline points="5,30 15,15 25,25 35,10 45,20 55,15" fill="none" stroke="#64748B" strokeWidth="2" />
@@ -279,6 +344,7 @@ const PatternHintCard = ({
   const patternType = pattern.type || 'unknown';
   const confidence = Math.round((pattern.confidence || pattern.render_quality || 0.5) * 100);
   const state = pattern.state || pattern.status || 'forming';
+  const mode = pattern.mode || 'loose'; // STRICT vs LOOSE
   const bias = patternType.includes('falling') || patternType.includes('ascending') || patternType.includes('bottom')
     ? 'bullish'
     : patternType.includes('rising') || patternType.includes('descending') || patternType.includes('top')
@@ -300,10 +366,16 @@ const PatternHintCard = ({
            bias === 'bearish' ? <TrendingDown size={16} color="#EF4444" /> :
            <Triangle size={16} color="#3B82F6" />}
           <PatternName>{patternType.replace(/_/g, ' ')}</PatternName>
+          <ModeBadge $mode={mode}>{mode}</ModeBadge>
         </Title>
         <ConfidenceBar>
-          <ConfidenceValue $value={confidence}>{confidence}%</ConfidenceValue>
-          <ConfidenceLabel>conf</ConfidenceLabel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <ConfidenceValue $value={confidence}>{confidence}%</ConfidenceValue>
+            <ConfidenceLabel>conf</ConfidenceLabel>
+          </div>
+          <ProgressBarContainer>
+            <ProgressBarFill $value={confidence} />
+          </ProgressBarContainer>
         </ConfidenceBar>
       </Header>
       <Body>

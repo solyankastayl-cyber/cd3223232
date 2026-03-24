@@ -1045,10 +1045,15 @@ class PerTimeframeBuilder:
             tf_role = MTFEngine.classify_tf(timeframe)
             
             # Build data dict for interpretation
+            # CRITICAL: Include pro_pattern if no strict pattern (for loose patterns)
+            pattern_for_interp = primary_pattern.to_dict() if primary_pattern else None
+            if not pattern_for_interp and pro_pattern_payload and pro_pattern_payload.get("pattern"):
+                pattern_for_interp = pro_pattern_payload["pattern"]
+            
             interp_data = {
                 "trend": structure_context_dict.get("bias", "neutral"),
                 "regime": structure_context_dict.get("regime", "unknown"),
-                "pattern": primary_pattern.to_dict() if primary_pattern else None,
+                "pattern": pattern_for_interp,
                 "structure": structure_context_dict,
                 "levels": (render_plan.get("levels", []) if render_plan else []),
             }
@@ -1266,12 +1271,16 @@ class PerTimeframeBuilder:
                 })
                 
                 # Build geometry from PRO pattern anchors
+                # LOWERED from 3 to 2 anchors for loose patterns (range has 4 corners = 4 anchors from build_anchors)
                 anchors = pro_pattern.get("anchors", [])
-                if len(anchors) >= 3:
+                boundaries = pro_pattern.get("meta", {}).get("boundaries", {})
+                
+                # For loose_range: even with 2 anchors, we have boundaries
+                if len(anchors) >= 2 or boundaries:
                     geo = {
                         "is_valid": True,
                         "anchors": anchors,
-                        "boundaries": pro_pattern.get("meta", {}).get("boundaries", {}),
+                        "boundaries": boundaries,
                         "mode": pattern_mode,
                     }
                     geo_source = "pro_pattern_engine"
@@ -1317,10 +1326,26 @@ class PerTimeframeBuilder:
                     final["ui"]["alternatives"] = pro_pattern_payload["alternatives"]
                     
             else:
-                # NO geometry → NO overlay → structure mode
-                final["analysis_mode"] = "structure"
-                final["summary"]["title"] = "Structure developing"
-                final["summary"]["text"] = "No dominant pattern. Market structure is in transition."
+                # NO geometry → check if we have ANY pattern info from PRO engine
+                if pro_pattern_payload and pro_pattern_payload.get("pattern"):
+                    # We have a pattern but can't render geometry
+                    pro_pattern = pro_pattern_payload["pattern"]
+                    label = pro_pattern.get("type", "structure").replace("_", " ").title()
+                    mode = pro_pattern.get("mode", "loose")
+                    
+                    final["analysis_mode"] = "structure"
+                    if mode == "loose":
+                        final["summary"]["title"] = f"{label} Developing"
+                        final["summary"]["text"] = f"A {label.lower()} formation is developing. Market structure is forming."
+                    else:
+                        final["summary"]["title"] = f"{label} Detected"
+                        final["summary"]["text"] = f"A {label.lower()} pattern detected. Structure identified."
+                else:
+                    # Truly no pattern
+                    final["analysis_mode"] = "structure"
+                    final["summary"]["title"] = "Structure Developing"
+                    final["summary"]["text"] = "Market structure is in transition."
+                    
                 final["ui"] = {
                     "main_overlay": None,
                 }
