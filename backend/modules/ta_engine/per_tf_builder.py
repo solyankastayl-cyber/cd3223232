@@ -1074,38 +1074,50 @@ class PerTimeframeBuilder:
             final = result.to_dict()
             
             # ═══════════════════════════════════════════════════════════
-            # ADD UI BLOCK FOR FRONTEND RENDERING
+            # STRICT UI BLOCK — NO FALLBACKS, NO FAKE GEOMETRY
             # ═══════════════════════════════════════════════════════════
-            # CRITICAL FIX: Extract geometry from pattern or geometry_contract
+            # Rule: Main overlay ONLY from anchor-based geometry_contract
+            # NO fallbacks, NO boundary reconstruction
+            
             geo = None
             pattern_type = None
+            geo_source = None
+            shape_valid = False
             
-            if primary_pattern:
-                # Try geometry_contract first, then from pattern
-                geo = geometry_contract or primary_pattern.get("geometry_contract")
-                pattern_type = primary_pattern.get("type")
-                
-                # If no geometry_contract, try to build from boundaries
-                if not geo and primary_pattern.get("boundaries"):
-                    geo = self._build_geometry_from_boundaries(primary_pattern)
+            # ONLY use geometry_contract built from anchors
+            if geometry_contract:
+                geo = geometry_contract
+                geo_source = "anchor_geometry"
+                shape_valid = geometry_contract.get("is_valid", False)
+                pattern_type = primary_pattern.get("type") if primary_pattern else None
             
-            # RENDER GATE: Only show figure if geometry is valid
-            if final["analysis_mode"] == "figure" and geo and pattern_type:
+            # STRICT RENDER CHECK:
+            # 1. analysis_mode must be "figure"
+            # 2. geometry must exist
+            # 3. geometry must be from anchor_geometry (not fallback)
+            # 4. shape must be valid
+            can_render = (
+                final["analysis_mode"] == "figure"
+                and geo is not None
+                and geo_source == "anchor_geometry"
+                and shape_valid is True
+                and pattern_type is not None
+            )
+            
+            if can_render:
                 final["ui"] = {
                     "main_overlay": {
                         "type": pattern_type,
                         "render_mode": "polygon",
                         "geometry": geo,
+                        "source": geo_source,
                     },
                 }
             else:
-                # No valid geometry - fallback to structure
-                if final["analysis_mode"] == "figure":
-                    # Downgrade to structure if no geometry
-                    final["analysis_mode"] = "structure"
-                    final["summary"]["title"] = "Structure in development"
-                    final["summary"]["text"] = "Market is forming structure. No dominant pattern geometry available."
-                
+                # NO geometry → NO overlay → FORCE structure mode
+                final["analysis_mode"] = "structure"
+                final["summary"]["title"] = "Structure developing"
+                final["summary"]["text"] = "No dominant pattern. Market structure is in transition."
                 final["ui"] = {
                     "main_overlay": None,
                 }
@@ -1208,53 +1220,6 @@ class PerTimeframeBuilder:
             })
         
         return chain_map
-
-    def _build_geometry_from_boundaries(self, pattern: Dict) -> Optional[Dict]:
-        """
-        Build geometry dict from pattern boundaries.
-        
-        This is a fallback for when geometry_contract is not available
-        but we have valid boundaries.
-        """
-        boundaries = pattern.get("boundaries", [])
-        if not boundaries:
-            return None
-        
-        upper_b = None
-        lower_b = None
-        
-        for b in boundaries:
-            if isinstance(b, dict):
-                b_id = b.get("id", "").lower()
-                if "upper" in b_id:
-                    upper_b = b
-                elif "lower" in b_id:
-                    lower_b = b
-        
-        if not upper_b or not lower_b:
-            return None
-        
-        # Build minimal geometry
-        return {
-            "boundaries": {
-                "upper": {
-                    "x1": upper_b.get("x1", 0),
-                    "y1": upper_b.get("y1", 0),
-                    "x2": upper_b.get("x2", 0),
-                    "y2": upper_b.get("y2", 0),
-                },
-                "lower": {
-                    "x1": lower_b.get("x1", 0),
-                    "y1": lower_b.get("y1", 0),
-                    "x2": lower_b.get("x2", 0),
-                    "y2": lower_b.get("y2", 0),
-                },
-            },
-            "anchors": pattern.get("render", {}).get("anchors", []),
-            "window": pattern.get("window", {}),
-            "is_valid": True,
-        }
-
 
     # ═══════════════════════════════════════════════════════════════
     # HTF CONTEXT BUILDER — For 1M/6M/1Y timeframes

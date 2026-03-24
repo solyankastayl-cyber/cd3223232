@@ -59,14 +59,14 @@ class DisplayGate:
             "min_touches_upper": 2,
             "min_touches_lower": 2,
             "must_converge": True,
-            "min_window_candles": 10,  # Lowered to accept shorter patterns
-            "max_angle_diff": 15,  # degrees
+            "min_window_candles": 20,
+            "max_angle_diff": 15,
         },
         "rising_wedge": {
             "min_touches_upper": 2,
             "min_touches_lower": 2,
             "must_converge": True,
-            "min_window_candles": 10,  # Lowered to accept shorter patterns
+            "min_window_candles": 20,
             "max_angle_diff": 15,
         },
         "ascending_triangle": {
@@ -85,7 +85,7 @@ class DisplayGate:
             "min_touches_upper": 2,
             "min_touches_lower": 2,
             "must_converge": True,
-            "min_window_candles": 10,  # Lowered to accept shorter patterns
+            "min_window_candles": 20,
         },
         "ascending_channel": {
             "min_touches_upper": 2,

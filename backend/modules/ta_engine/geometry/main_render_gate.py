@@ -68,29 +68,29 @@ class MainRenderGate:
     """
     
     def __init__(self):
-        # TF-specific thresholds
+        # TF-specific thresholds - STRICT VALUES
         self.coverage_thresholds = {
-            "4H": 0.10,  # Lowered from 0.15
-            "1D": 0.10,  # Lowered from 0.20
-            "7D": 0.15,  # Lowered from 0.25
-            "1M": 0.20,  # Lowered from 0.30
-            "3M": 0.25,  # Lowered from 0.35
-            "6M": 0.30,  # Lowered from 0.40
-            "1Y": 0.35,  # Lowered from 0.45
+            "4H": 0.20,
+            "1D": 0.25,
+            "7D": 0.30,
+            "1M": 0.35,
+            "3M": 0.40,
+            "6M": 0.45,
+            "1Y": 0.50,
         }
         
         self.window_thresholds = {
-            "4H": 8,
-            "1D": 10,  # Lowered to accept shorter patterns
-            "7D": 10,
-            "1M": 6,
-            "3M": 5,
-            "6M": 4,
-            "1Y": 3,
+            "4H": 15,
+            "1D": 20,
+            "7D": 15,
+            "1M": 10,
+            "3M": 8,
+            "6M": 6,
+            "1Y": 5,
         }
         
         self.min_touches = 2
-        self.min_cleanliness = 0.50
+        self.min_cleanliness = 0.60  # STRICT: price must respect boundaries
     
     def check(
         self,
