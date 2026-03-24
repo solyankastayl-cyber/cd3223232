@@ -60,23 +60,34 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
       const strokeWidth = mode === 'loose' ? 1.5 : 2.5;
       
       // ═══════════════════════════════════════════════════════════════
-      // DOUBLE TOP / DOUBLE BOTTOM
+      // DOUBLE TOP / DOUBLE BOTTOM (V2 — с нормализацией от backend)
       // ═══════════════════════════════════════════════════════════════
       if (patternType === 'double_top' || patternType === 'double_bottom') {
-        if (anchors.length < 2 || !neckline) return null;
+        // Попробуем получить нормализованные anchors из backend
+        const normalizedAnchors = renderContract.anchors || {};
+        let p1 = normalizedAnchors.p1;
+        let p2 = normalizedAnchors.p2;
+        let valley = normalizedAnchors.valley;
         
-        // Sort by price to find peaks and valley
-        const sortedByPrice = [...anchors].sort((a, b) => 
-          patternType === 'double_top' ? b.price - a.price : a.price - b.price
-        );
+        // Fallback: старый способ (из массива anchors)
+        if (!p1 || !p2) {
+          if (anchors.length < 2 || !neckline) return null;
+          
+          // Sort by price to find peaks and valley
+          const sortedByPrice = [...anchors].sort((a, b) => 
+            patternType === 'double_top' ? b.price - a.price : a.price - b.price
+          );
+          
+          // Get two peaks (highest for double_top, lowest for double_bottom)
+          const peaks = sortedByPrice.slice(0, 2).sort((a, b) => a.time - b.time);
+          p1 = peaks[0];
+          p2 = peaks[1];
+          
+          // Valley is anchor at neckline level or synthetic
+          valley = anchors.find(a => Math.abs(a.price - neckline) < (Math.abs(p1.price - neckline) * 0.1));
+        }
         
-        // Get two peaks (highest for double_top, lowest for double_bottom)
-        const peaks = sortedByPrice.slice(0, 2).sort((a, b) => a.time - b.time);
-        const p1 = peaks[0];
-        const p2 = peaks[1];
-        
-        // Valley is anchor at neckline level or synthetic
-        let valley = anchors.find(a => Math.abs(a.price - neckline) < (Math.abs(p1.price - neckline) * 0.1));
+        // Если valley нет — создаём синтетический (по центру)
         if (!valley) {
           valley = {
             time: Math.floor((p1.time + p2.time) / 2),
@@ -96,16 +107,56 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         // Check if coordinates are valid
         if ([x1, y1, xV, yV, x2, y2, yNeck].some(v => v === null || v === 0)) return null;
         
+        // ═══════════════════════════════════════════════════════════
+        // ВИЗУАЛЬНЫЕ УЛУЧШЕНИЯ V2
+        // ═══════════════════════════════════════════════════════════
+        
+        // Цвет зависит от типа паттерна
+        const patternColor = patternType === 'double_top' ? '#ef4444' : '#22c55e';
+        const valleyColor = '#00e5ff';
+        
+        // Градиент для заливки (опционально)
+        const fillId = `fill-${patternType}-${Date.now()}`;
+        
         return {
           type: 'double_top',
           elements: [
-            // Main polyline: P1 → Valley → P2
+            // Gradient definition (для заливки)
+            {
+              tag: 'defs',
+              props: {},
+              content: null,
+              children: [{
+                tag: 'linearGradient',
+                props: {
+                  id: fillId,
+                  x1: '0%',
+                  y1: '0%',
+                  x2: '0%',
+                  y2: '100%',
+                },
+                children: [
+                  { tag: 'stop', props: { offset: '0%', stopColor: patternColor, stopOpacity: '0.15' } },
+                  { tag: 'stop', props: { offset: '100%', stopColor: patternColor, stopOpacity: '0.02' } },
+                ]
+              }]
+            },
+            // Fill area (M-shape с заливкой)
+            {
+              tag: 'polygon',
+              props: {
+                points: `${x1},${yNeck} ${x1},${y1} ${xV},${yV} ${x2},${y2} ${x2},${yNeck}`,
+                fill: `url(#${fillId})`,
+                stroke: 'none',
+              }
+            },
+            // Main polyline: P1 → Valley → P2 (M-форма)
             {
               tag: 'polyline',
               props: {
                 points: `${x1},${y1} ${xV},${yV} ${x2},${y2}`,
                 fill: 'none',
-                stroke: color,
+                stroke: patternColor,
                 strokeWidth: strokeWidth,
                 strokeLinecap: 'round',
                 strokeLinejoin: 'round',
@@ -119,9 +170,44 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
                 y1: yNeck,
                 x2: Math.max(x1, x2) + 20,
                 y2: yNeck,
-                stroke: '#00e5ff',
+                stroke: valleyColor,
                 strokeWidth: 2,
                 strokeDasharray: '6 4',
+              }
+            },
+            // Peak markers (circles)
+            {
+              tag: 'circle',
+              props: {
+                cx: x1,
+                cy: y1,
+                r: 4,
+                fill: patternColor,
+                stroke: '#fff',
+                strokeWidth: 1.5,
+              }
+            },
+            {
+              tag: 'circle',
+              props: {
+                cx: x2,
+                cy: y2,
+                r: 4,
+                fill: patternColor,
+                stroke: '#fff',
+                strokeWidth: 1.5,
+              }
+            },
+            // Valley marker
+            {
+              tag: 'circle',
+              props: {
+                cx: xV,
+                cy: yV,
+                r: 3,
+                fill: valleyColor,
+                stroke: '#fff',
+                strokeWidth: 1,
               }
             },
             // Labels
@@ -129,8 +215,8 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
               tag: 'text',
               props: {
                 x: x1,
-                y: y1 - 8,
-                fill: color,
+                y: y1 - 12,
+                fill: patternColor,
                 fontSize: '11px',
                 fontWeight: 'bold',
                 textAnchor: 'middle',
@@ -141,8 +227,8 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
               tag: 'text',
               props: {
                 x: x2,
-                y: y2 - 8,
-                fill: color,
+                y: y2 - 12,
+                fill: patternColor,
                 fontSize: '11px',
                 fontWeight: 'bold',
                 textAnchor: 'middle',
@@ -153,13 +239,13 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
               tag: 'text',
               props: {
                 x: xV,
-                y: yV + 16,
-                fill: '#00e5ff',
+                y: yV + 18,
+                fill: valleyColor,
                 fontSize: '10px',
                 fontWeight: 'bold',
                 textAnchor: 'middle',
               },
-              content: 'Valley'
+              content: 'V'
             },
           ]
         };
@@ -229,7 +315,7 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // RANGE / CHANNEL
+      // RANGE / CHANNEL (V2 — с улучшениями)
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('range') || patternType.includes('channel')) {
         const upper = boundaries.upper;
@@ -237,9 +323,12 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         if (!upper || !lower) return null;
         
-        // For range, use average prices for horizontal lines
-        const upperPrice = Math.max(upper.y1, upper.y2);
-        const lowerPrice = Math.min(lower.y1, lower.y2);
+        // Получаем нормализованные bounds если есть
+        const bounds = renderContract.bounds || {};
+        
+        // For range, use normalized prices or fallback to boundaries
+        const upperPrice = bounds.top || Math.max(upper.y1, upper.y2);
+        const lowerPrice = bounds.bottom || Math.min(lower.y1, lower.y2);
         
         const xStart = Math.min(toX(upper.x1), toX(lower.x1));
         const xEnd = Math.max(toX(upper.x2), toX(lower.x2));
@@ -248,10 +337,18 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         if ([xStart, xEnd, yUpper, yLower].some(v => v === null || v === 0)) return null;
         
+        // Confidence влияет на opacity (нормализован от backend)
+        const confidence = renderContract.confidence || 0.5;
+        const fillOpacity = Math.min(0.2, confidence * 0.3);
+        
+        // Touch count для визуализации
+        const touches = renderContract.touches || 0;
+        const touchLabel = touches > 0 ? `${touches} touches` : '';
+        
         return {
           type: 'range',
           elements: [
-            // Range rectangle fill
+            // Range rectangle fill с динамической opacity
             {
               tag: 'rect',
               props: {
@@ -259,20 +356,49 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
                 y: yUpper,
                 width: xEnd - xStart,
                 height: yLower - yUpper,
-                fill: `${color}10`,
+                fill: `${color}`,
+                fillOpacity: fillOpacity,
                 stroke: color,
                 strokeWidth: strokeWidth,
                 strokeDasharray: strokeStyle,
+                rx: 4, // Скруглённые углы
+                ry: 4,
+              }
+            },
+            // Upper resistance line (более заметная)
+            {
+              tag: 'line',
+              props: {
+                x1: xStart - 10,
+                y1: yUpper,
+                x2: xEnd + 10,
+                y2: yUpper,
+                stroke: '#ef4444',
+                strokeWidth: 2,
+                strokeDasharray: '4 2',
+              }
+            },
+            // Lower support line
+            {
+              tag: 'line',
+              props: {
+                x1: xStart - 10,
+                y1: yLower,
+                x2: xEnd + 10,
+                y2: yLower,
+                stroke: '#22c55e',
+                strokeWidth: 2,
+                strokeDasharray: '4 2',
               }
             },
             // Resistance label
             {
               tag: 'text',
               props: {
-                x: xEnd + 5,
+                x: xEnd + 8,
                 y: yUpper + 4,
                 fill: '#ef4444',
-                fontSize: '10px',
+                fontSize: '11px',
                 fontWeight: 'bold',
               },
               content: 'R'
@@ -281,14 +407,28 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
             {
               tag: 'text',
               props: {
-                x: xEnd + 5,
+                x: xEnd + 8,
                 y: yLower + 4,
                 fill: '#22c55e',
-                fontSize: '10px',
+                fontSize: '11px',
                 fontWeight: 'bold',
               },
               content: 'S'
             },
+            // Touch count label (если есть)
+            ...(touchLabel ? [{
+              tag: 'text',
+              props: {
+                x: (xStart + xEnd) / 2,
+                y: (yUpper + yLower) / 2,
+                fill: '#64748b',
+                fontSize: '9px',
+                fontWeight: 'normal',
+                textAnchor: 'middle',
+                opacity: 0.7,
+              },
+              content: touchLabel
+            }] : []),
           ]
         };
       }

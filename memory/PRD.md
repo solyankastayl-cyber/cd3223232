@@ -1,62 +1,68 @@
-# TA Engine - Technical Analysis Module PRD
+# TA Engine PRD - Technical Analysis Module
 
 ## Original Problem Statement
-Исправить отрисовку фигур на графике — паттерны обнаруживались но не рисовались.
+Поднять проект с GitHub репозитория, изучить архитектуру модуля теханализа и реализовать Geometry Normalization Layer для улучшения визуализации паттернов.
 
-## What's Been Implemented
+## Architecture
+- **Backend**: FastAPI (Python) - модуль `ta_engine`
+- **Frontend**: React - модуль `cockpit` с `PatternSVGOverlay.jsx`
+- **Database**: MongoDB
 
-### 2026-03-24: Pattern Rendering Complete
+## Module Focus: ta_engine
+Работа только с модулем теханализа (`/app/backend/modules/ta_engine/`)
 
-**Problem**: Patterns detected but NOT drawn (render was DISABLED)
-
-**Solution in `ResearchChart.jsx`**:
-
-1. **Double Top/Bottom**:
-   - **Resistance** line at peak level (solid red/green)
-   - **Neckline** line at valley level (dashed cyan)
-   - **P1, P2 markers** (arrows down at peaks)
-   - **V marker** (arrow up at valley)
-   
-2. **Range/Channel**:
-   - **Resistance** horizontal line (upper bound)
-   - **Support** horizontal line (lower bound)
-   - Labels on right axis
-
-3. **Wedge/Triangle**:
-   - Diagonal boundary lines via LineSeries
-   - Upper + Lower trendlines
-
-**Technical Notes**:
-- Uses `createPriceLine` for horizontal lines (stable)
-- Uses `createSeriesMarkers` for markers (new API)
-- `LineSeries` for diagonal lines may disappear on re-render
-- For true polyline overlay: requires custom plugin or SVG
-
-## Current Pattern Visualization
-
-### Double Top (4H):
+### Geometry Layer Structure
 ```
-    P1↓         P2↓
-     |           |
-     |     V↑    |
-     |     |     |
-─────────────────── Resistance (71811)
-     |     |     |
-     └──────────── Neckline (67332)
+/app/backend/modules/ta_engine/geometry/
+├── geometry_normalizer.py  ⬅ NEW (Geometry Normalization Layer)
+├── pattern_geometry_builder.py
+├── wedge_shape_validator.py
+├── main_render_gate.py
+└── __init__.py
 ```
 
-### Loose Range (1D):
-```
-─────────────────── Resistance (76022)
-     │candles│
-─────────────────── Support (62534)
-```
+## What's Been Implemented (Mar 24, 2026)
 
-## Test Coverage
-- Pattern Rendering: 100%
-- Overall: 95.1%
+### 1. Geometry Normalization Layer (`geometry_normalizer.py`)
+- **Double Top/Bottom**: 
+  - Выравнивание пиков по среднему уровню
+  - Симметрия по времени относительно valley
+  - Усиление valley (min * 0.995)
+- **Range**:
+  - Padding 1% для отступов от свечей
+  - Confidence через количество касаний
+- **Wedge/Triangle**:
+  - Принудительная сходимость линий
+  - Фильтр почти параллельных линий
+
+### 2. Frontend Improvements (`PatternSVGOverlay.jsx`)
+- **Double Top**: Gradient fill, M-shape, маркеры P1/P2/V
+- **Range**: Dynamic opacity по confidence, touch count labels, R/S маркеры
+
+### 3. Integration
+- Нормализатор интегрирован в `per_tf_builder.py`
+- Логирование применённых нормализаций
+
+## Testing Status
+- ✅ 12/12 unit tests passed for geometry_normalizer
+- ✅ Backend API health check OK
+- ✅ Frontend compiled successfully
+
+## Backlog (P0-P2)
+### P0 (Critical)
+- [ ] End-to-end test с реальными данными Coinbase
+
+### P1 (Important)
+- [ ] Pattern Beautifier (gradient, glow)
+- [ ] Projection lines (target/invalidation zones)
+- [ ] Snap to Structure (strong pivots only)
+
+### P2 (Nice to have)
+- [ ] Hover highlight
+- [ ] Breakout projection
+- [ ] Custom cursors
 
 ## Next Tasks
-1. Signal Layer (entry/invalidation/target)
-2. True polyline via SVG overlay or custom plugin
-3. Area fill for pattern zones
+1. Тест E2E с Coinbase адаптером
+2. Visual upgrade (gradient fill, glow)
+3. Projection линии

@@ -84,6 +84,7 @@ from modules.ta_engine.setup.pattern_priority_system import get_pattern_priority
 from modules.ta_engine.geometry.pattern_geometry_builder import get_pattern_geometry_builder
 from modules.ta_engine.geometry.wedge_shape_validator import get_wedge_shape_validator
 from modules.ta_engine.geometry.main_render_gate import get_main_render_gate
+from modules.ta_engine.geometry.geometry_normalizer import get_geometry_normalizer, normalize_pattern
 
 
 # Singleton for visualization engine
@@ -681,6 +682,19 @@ class PerTimeframeBuilder:
                         pattern_render_contract["geometry_contract"] = geometry_contract_dict
                         pattern_render_contract["shape_validation"] = shape_validation.to_dict() if shape_validation else None
                         pattern_render_contract["render_gate"] = gate_result.to_dict()
+                        
+                        # ═══════════════════════════════════════════════════════════
+                        # GEOMETRY NORMALIZATION — Clean up anchors for better visuals
+                        # ═══════════════════════════════════════════════════════════
+                        try:
+                            normalizer = get_geometry_normalizer()
+                            norm_result = normalizer.normalize(pattern_render_contract)
+                            if norm_result.was_normalized:
+                                pattern_render_contract = norm_result.pattern
+                                print(f"[PerTF] ✨ Geometry normalized: {norm_result.normalization_type} "
+                                      f"changes={norm_result.changes}")
+                        except Exception as norm_err:
+                            print(f"[PerTF] ⚠️ Normalization skipped: {norm_err}")
                         
                         # Log
                         print(f"[PerTF] V2 RESULT: {{"
