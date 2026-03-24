@@ -335,6 +335,31 @@ async def get_mtf_analysis(
             entry_tf=entry_tf,
         )
         
+        # ═══════════════════════════════════════════════════════════════
+        # MTF ALIGNMENT ENGINE — связываем TF между собой (NEW!)
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            from modules.ta_engine.mtf_alignment_engine import build_mtf_alignment, get_alignment_summary
+            from modules.ta_engine.narrative_engine import build_mtf_narrative
+            
+            # Build alignment from tf_map
+            alignment = build_mtf_alignment(tf_map)
+            alignment_summary = get_alignment_summary(alignment)
+            
+            # Build MTF narrative
+            mtf_narrative = build_mtf_narrative(tf_map, alignment)
+            
+            # Add to mtf_context
+            if isinstance(mtf_context, dict):
+                mtf_context["alignment"] = alignment
+                mtf_context["alignment_summary"] = alignment_summary
+                mtf_context["mtf_narrative"] = mtf_narrative
+                
+            print(f"[MTF] Alignment: {alignment.get('direction')} ({alignment.get('confidence')})")
+            print(f"[MTF] MTF Narrative: {mtf_narrative.get('short', '')[:60]}")
+        except Exception as e:
+            print(f"[MTF] Alignment/Narrative error: {e}")
+        
         # Add interpretation summary_text for frontend
         try:
             from modules.ta_engine.interpretation.interpretation_engine import get_interpretation_engine

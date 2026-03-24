@@ -1824,6 +1824,98 @@ const ResearchView = () => {
           </div>
         )}
         
+        {/* MTF ALIGNMENT BOX — Multi-timeframe alignment (NEW!) */}
+        {mtfContext?.alignment && (
+          <div 
+            data-testid="mtf-alignment-box"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              padding: '10px 16px',
+              background: mtfContext.alignment.direction === 'bullish' 
+                ? 'rgba(5, 165, 132, 0.08)' 
+                : mtfContext.alignment.direction === 'bearish'
+                ? 'rgba(239, 68, 68, 0.08)'
+                : 'rgba(148, 163, 184, 0.08)',
+              border: `1px solid ${
+                mtfContext.alignment.direction === 'bullish' 
+                  ? 'rgba(5, 165, 132, 0.2)' 
+                  : mtfContext.alignment.direction === 'bearish'
+                  ? 'rgba(239, 68, 68, 0.2)'
+                  : 'rgba(148, 163, 184, 0.2)'
+              }`,
+              borderRadius: '8px',
+              marginBottom: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{
+                fontSize: '10px',
+                fontWeight: '700',
+                color: '#64748b',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+              }}>
+                MTF ALIGNMENT
+              </span>
+              <span style={{
+                padding: '2px 8px',
+                borderRadius: '4px',
+                fontSize: '11px',
+                fontWeight: '700',
+                textTransform: 'uppercase',
+                background: mtfContext.alignment.direction === 'bullish' 
+                  ? 'rgba(5, 165, 132, 0.15)' 
+                  : mtfContext.alignment.direction === 'bearish'
+                  ? 'rgba(239, 68, 68, 0.15)'
+                  : 'rgba(148, 163, 184, 0.15)',
+                color: mtfContext.alignment.direction === 'bullish' 
+                  ? '#05A584' 
+                  : mtfContext.alignment.direction === 'bearish'
+                  ? '#EF4444'
+                  : '#64748b',
+              }}>
+                {mtfContext.alignment.direction}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Confidence:</span>
+              <div style={{
+                width: '60px',
+                height: '6px',
+                background: '#e2e8f0',
+                borderRadius: '3px',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${Math.round((mtfContext.alignment.confidence || 0) * 100)}%`,
+                  background: mtfContext.alignment.direction === 'bullish' 
+                    ? '#05A584' 
+                    : mtfContext.alignment.direction === 'bearish'
+                    ? '#EF4444'
+                    : '#94a3b8',
+                  borderRadius: '3px',
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+              <span style={{ 
+                fontSize: '11px', 
+                fontWeight: '600',
+                color: mtfContext.alignment.direction === 'bullish' 
+                  ? '#05A584' 
+                  : mtfContext.alignment.direction === 'bearish'
+                  ? '#EF4444'
+                  : '#64748b',
+              }}>
+                {Math.round((mtfContext.alignment.confidence || 0) * 100)}%
+              </span>
+            </div>
+          </div>
+        )}
+        
         {/* Per-TF Interpretation Panel — shows interpretation for selected TF */}
         {setupData?.interpretation && (
           <div 
@@ -1852,6 +1944,39 @@ const ResearchView = () => {
               lineHeight: '1.5',
             }}>
               {setupData.interpretation}
+            </div>
+          </div>
+        )}
+        
+        {/* NARRATIVE BOX — Market Story (NEW!) */}
+        {setupData?.narrative?.full && (
+          <div 
+            data-testid="narrative-box"
+            style={{
+              padding: '12px 16px',
+              background: 'rgba(15, 23, 42, 0.03)',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              marginBottom: '12px',
+            }}
+          >
+            <div style={{
+              fontSize: '10px',
+              fontWeight: '700',
+              color: '#94a3b8',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              marginBottom: '6px',
+            }}>
+              MARKET NARRATIVE
+            </div>
+            <div style={{
+              fontSize: '13px',
+              color: '#475569',
+              lineHeight: '1.6',
+              fontStyle: 'italic',
+            }}>
+              {setupData.narrative.full}
             </div>
           </div>
         )}

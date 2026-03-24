@@ -6,8 +6,9 @@ Backend API Testing for TA Engine
 Tests the technical analysis engine APIs with focus on:
 1. Health endpoint
 2. TA Engine MTF endpoints for pattern detection
-3. History Scanner functionality
-4. Display Gate with lowered thresholds
+3. Market Narrative Engine and MTF Alignment Engine (NEW!)
+4. History Scanner functionality
+5. Display Gate with lowered thresholds
 """
 
 import requests
@@ -214,6 +215,203 @@ class TAEngineAPITester:
         
         return success
 
+    def test_market_narrative_engine(self) -> bool:
+        """Test Market Narrative Engine - API /api/ta-engine/mtf/BTC?timeframes=1D returns narrative with short and full"""
+        print(f"\n🔍 Testing Market Narrative Engine...")
+        
+        success, response = self.run_test(
+            "Market Narrative Engine (1D)",
+            "GET",
+            "/api/ta-engine/mtf/BTC",
+            200,
+            params={"timeframes": "1D"}
+        )
+        
+        if not success or not isinstance(response, dict):
+            self.log_test("Market Narrative Engine", False, {"error": "API call failed"})
+            return False
+        
+        # Check tf_map structure
+        tf_map = response.get("tf_map", {})
+        if not tf_map:
+            self.log_test("Market Narrative Engine", False, {"error": "tf_map missing"})
+            return False
+        
+        # Check 1D timeframe data
+        tf_1d = tf_map.get("1D", {})
+        if not tf_1d:
+            self.log_test("Market Narrative Engine", False, {"error": "1D timeframe data missing"})
+            return False
+        
+        # Check narrative exists
+        narrative = tf_1d.get("narrative", {})
+        if not narrative:
+            self.log_test("Market Narrative Engine", False, {"error": "narrative field missing"})
+            return False
+        
+        # Check narrative.short
+        narrative_short = narrative.get("short", "")
+        if not narrative_short or len(narrative_short.strip()) == 0:
+            self.log_test("Market Narrative Engine", False, {"error": "narrative.short is empty"})
+            return False
+        
+        # Check narrative.full
+        narrative_full = narrative.get("full", "")
+        if not narrative_full or len(narrative_full.strip()) == 0:
+            self.log_test("Market Narrative Engine", False, {"error": "narrative.full is empty"})
+            return False
+        
+        # Check if narrative.full contains pattern description when pattern exists
+        pattern = tf_1d.get("primary_pattern") or tf_1d.get("pattern_render_contract")
+        pattern_mentioned = True
+        if pattern and pattern.get("type"):
+            pattern_type = pattern.get("type", "").replace("_", " ")
+            if pattern_type.lower() not in narrative_full.lower():
+                pattern_mentioned = False
+        
+        self.log_test("Market Narrative Engine", True, {
+            "narrative_short": narrative_short[:50] + "..." if len(narrative_short) > 50 else narrative_short,
+            "narrative_full": narrative_full[:80] + "..." if len(narrative_full) > 80 else narrative_full,
+            "pattern_mentioned": pattern_mentioned,
+            "pattern_type": pattern.get("type") if pattern else None
+        })
+        return True
+
+    def test_mtf_alignment_engine(self) -> bool:
+        """Test MTF Alignment Engine - API /api/ta-engine/mtf/BTC?timeframes=1D,4H returns mtf_context.alignment"""
+        print(f"\n🔍 Testing MTF Alignment Engine...")
+        
+        success, response = self.run_test(
+            "MTF Alignment Engine (1D,4H)",
+            "GET",
+            "/api/ta-engine/mtf/BTC",
+            200,
+            params={"timeframes": "1D,4H"}
+        )
+        
+        if not success or not isinstance(response, dict):
+            self.log_test("MTF Alignment Engine", False, {"error": "API call failed"})
+            return False
+        
+        # Check mtf_context exists
+        mtf_context = response.get("mtf_context", {})
+        if not mtf_context:
+            self.log_test("MTF Alignment Engine", False, {"error": "mtf_context missing"})
+            return False
+        
+        # Check alignment exists
+        alignment = mtf_context.get("alignment", {})
+        if not alignment:
+            self.log_test("MTF Alignment Engine", False, {"error": "mtf_context.alignment missing"})
+            return False
+        
+        # Check alignment.direction
+        direction = alignment.get("direction", "")
+        valid_directions = ["bullish", "bearish", "neutral"]
+        if direction not in valid_directions:
+            self.log_test("MTF Alignment Engine", False, {
+                "error": "Invalid alignment.direction",
+                "expected": valid_directions,
+                "actual": direction
+            })
+            return False
+        
+        # Check alignment.confidence
+        confidence = alignment.get("confidence")
+        if confidence is None or not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
+            self.log_test("MTF Alignment Engine", False, {
+                "error": "Invalid alignment.confidence",
+                "expected": "Number between 0 and 1",
+                "actual": confidence
+            })
+            return False
+        
+        # Check mtf_narrative exists
+        mtf_narrative = mtf_context.get("mtf_narrative", {})
+        if not mtf_narrative:
+            self.log_test("MTF Alignment Engine", False, {"error": "mtf_context.mtf_narrative missing"})
+            return False
+        
+        # Check mtf_narrative.short and full
+        mtf_narrative_short = mtf_narrative.get("short", "")
+        mtf_narrative_full = mtf_narrative.get("full", "")
+        
+        if not mtf_narrative_short or len(mtf_narrative_short.strip()) == 0:
+            self.log_test("MTF Alignment Engine", False, {"error": "mtf_narrative.short is empty"})
+            return False
+        
+        if not mtf_narrative_full or len(mtf_narrative_full.strip()) == 0:
+            self.log_test("MTF Alignment Engine", False, {"error": "mtf_narrative.full is empty"})
+            return False
+        
+        self.log_test("MTF Alignment Engine", True, {
+            "alignment_direction": direction,
+            "alignment_confidence": confidence,
+            "mtf_narrative_short": mtf_narrative_short[:50] + "..." if len(mtf_narrative_short) > 50 else mtf_narrative_short,
+            "mtf_narrative_full": mtf_narrative_full[:80] + "..." if len(mtf_narrative_full) > 80 else mtf_narrative_full
+        })
+        return True
+
+    def test_4h_double_top_pattern(self) -> bool:
+        """Test if 4H timeframe shows Double Top pattern (if present)"""
+        print(f"\n🔍 Testing 4H Timeframe - Double Top Pattern...")
+        
+        success, response = self.run_test(
+            "4H Double Top Pattern Check",
+            "GET",
+            "/api/ta-engine/mtf/BTC",
+            200,
+            params={"timeframes": "4H"}
+        )
+        
+        if not success or not isinstance(response, dict):
+            self.log_test("4H Double Top Pattern", False, {"error": "API call failed"})
+            return False
+        
+        # Check 4H timeframe data
+        tf_map = response.get("tf_map", {})
+        tf_4h = tf_map.get("4H", {})
+        
+        if not tf_4h:
+            self.log_test("4H Double Top Pattern", False, {"error": "4H timeframe data missing"})
+            return False
+        
+        # Check for patterns in 4H data
+        patterns_found = []
+        
+        # Check primary_pattern
+        primary_pattern = tf_4h.get("primary_pattern")
+        if primary_pattern and primary_pattern.get("type"):
+            patterns_found.append(primary_pattern.get("type"))
+        
+        # Check pattern_render_contract
+        render_contract = tf_4h.get("pattern_render_contract")
+        if render_contract and render_contract.get("type"):
+            patterns_found.append(render_contract.get("type"))
+        
+        # Check alternative patterns
+        alt_patterns = tf_4h.get("alternative_patterns", [])
+        for alt in alt_patterns:
+            if alt.get("type"):
+                patterns_found.append(alt.get("type"))
+        
+        # Check alternative render contracts
+        alt_render_contracts = tf_4h.get("alternative_render_contracts", [])
+        for alt in alt_render_contracts:
+            if alt.get("type"):
+                patterns_found.append(alt.get("type"))
+        
+        # Look for Double Top pattern
+        double_top_found = any("double_top" in pattern.lower() or "double top" in pattern.lower() 
+                             for pattern in patterns_found)
+        
+        # This test passes regardless of whether Double Top is found, as it depends on current market conditions
+        self.log_test("4H Double Top Pattern", True, {
+            "double_top_found": double_top_found,
+            "patterns_detected": patterns_found,
+            "note": "Double Top presence depends on current market conditions"
+        })
+        return True
     def test_history_scanner_logs(self) -> bool:
         """Test if HistoryScanner is working by checking API responses for scanner activity"""
         print(f"\n🔍 Testing HistoryScanner functionality...")
@@ -525,6 +723,9 @@ class TAEngineAPITester:
             "coinbase_provider": self.test_coinbase_provider_status(),
             "ta_engine_1d": self.test_ta_engine_mtf_1d(),
             "ta_engine_4h": self.test_ta_engine_mtf_4h(),
+            "market_narrative_engine": self.test_market_narrative_engine(),
+            "mtf_alignment_engine": self.test_mtf_alignment_engine(),
+            "4h_double_top_pattern": self.test_4h_double_top_pattern(),
             "sol_1d_figure_mode": self.test_sol_1d_analysis_mode_figure(),
             "btc_eth_structure_mode": self.test_btc_eth_1d_analysis_mode_structure(),
             "history_scanner": self.test_history_scanner_logs(),

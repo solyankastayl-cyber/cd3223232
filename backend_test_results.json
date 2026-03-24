@@ -1,8 +1,8 @@
 {
   "summary": {
-    "tests_run": 15,
-    "tests_passed": 14,
-    "success_rate": 93.33333333333333,
+    "tests_run": 21,
+    "tests_passed": 20,
+    "success_rate": 95.23809523809523,
     "critical_issues": []
   },
   "test_results": {
@@ -11,6 +11,9 @@
     "coinbase_provider": true,
     "ta_engine_1d": true,
     "ta_engine_4h": true,
+    "market_narrative_engine": true,
+    "mtf_alignment_engine": true,
+    "4h_double_top_pattern": true,
     "sol_1d_figure_mode": true,
     "btc_eth_structure_mode": true,
     "history_scanner": false,
@@ -20,7 +23,7 @@
     {
       "test_name": "Health Check",
       "success": true,
-      "timestamp": "2026-03-24T15:26:30.274445",
+      "timestamp": "2026-03-24T15:55:24.663653",
       "details": {
         "status_code": 200,
         "expected_status": 200,
@@ -31,7 +34,7 @@
     {
       "test_name": "TA Engine Status",
       "success": true,
-      "timestamp": "2026-03-24T15:26:30.440503",
+      "timestamp": "2026-03-24T15:55:24.790762",
       "details": {
         "status_code": 200,
         "expected_status": 200,
@@ -42,73 +45,144 @@
     {
       "test_name": "Coinbase Provider Status",
       "success": true,
-      "timestamp": "2026-03-24T15:26:30.552241",
+      "timestamp": "2026-03-24T15:55:24.936505",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 437,
+        "response_size": 438,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/provider/coinbase/status"
       }
     },
     {
       "test_name": "TA Engine MTF BTC 1D",
       "success": true,
-      "timestamp": "2026-03-24T15:26:30.904146",
+      "timestamp": "2026-03-24T15:55:25.243526",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 164189,
+        "response_size": 164713,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
       }
     },
     {
       "test_name": "TA Engine MTF BTC 4H",
       "success": true,
-      "timestamp": "2026-03-24T15:26:31.278007",
+      "timestamp": "2026-03-24T15:55:25.505209",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 203246,
+        "response_size": 203789,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "Market Narrative Engine (1D)",
+      "success": true,
+      "timestamp": "2026-03-24T15:55:25.687652",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 164713,
+        "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "Market Narrative Engine",
+      "success": true,
+      "timestamp": "2026-03-24T15:55:25.688520",
+      "details": {
+        "narrative_short": "Market is moving in a neutral structure.",
+        "narrative_full": "Market is moving in a neutral structure. A developing loose range structure is f...",
+        "pattern_mentioned": true,
+        "pattern_type": "loose_range"
+      }
+    },
+    {
+      "test_name": "MTF Alignment Engine (1D,4H)",
+      "success": true,
+      "timestamp": "2026-03-24T15:55:26.104642",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 367184,
+        "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "MTF Alignment Engine",
+      "success": true,
+      "timestamp": "2026-03-24T15:55:26.105420",
+      "details": {
+        "alignment_direction": "neutral",
+        "alignment_confidence": 0.0,
+        "mtf_narrative_short": "Market shows mixed signals across timeframes.",
+        "mtf_narrative_full": "Market shows mixed signals across timeframes."
+      }
+    },
+    {
+      "test_name": "4H Double Top Pattern Check",
+      "success": true,
+      "timestamp": "2026-03-24T15:55:26.270828",
+      "details": {
+        "status_code": 200,
+        "expected_status": 200,
+        "response_size": 203789,
+        "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
+      }
+    },
+    {
+      "test_name": "4H Double Top Pattern",
+      "success": true,
+      "timestamp": "2026-03-24T15:55:26.271511",
+      "details": {
+        "double_top_found": true,
+        "patterns_detected": [
+          "double_top",
+          "ascending_channel",
+          "ascending_channel",
+          "ascending_channel",
+          "ascending_triangle"
+        ],
+        "note": "Double Top presence depends on current market conditions"
       }
     },
     {
       "test_name": "SOL 1D Analysis Mode Figure",
       "success": true,
-      "timestamp": "2026-03-24T15:26:31.550017",
+      "timestamp": "2026-03-24T15:55:26.501925",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 152549,
+        "response_size": 153032,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/SOL"
       }
     },
     {
       "test_name": "BTC 1D Analysis Mode Check",
       "success": true,
-      "timestamp": "2026-03-24T15:26:31.711296",
+      "timestamp": "2026-03-24T15:55:26.678672",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 164189,
+        "response_size": 164713,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
       }
     },
     {
       "test_name": "ETH 1D Analysis Mode Check",
       "success": true,
-      "timestamp": "2026-03-24T15:26:32.003369",
+      "timestamp": "2026-03-24T15:55:26.985120",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 161405,
+        "response_size": 161920,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/ETH"
       }
     },
     {
       "test_name": "BTC/ETH Structure Mode",
       "success": true,
-      "timestamp": "2026-03-24T15:26:32.004387",
+      "timestamp": "2026-03-24T15:55:26.985962",
       "details": {
         "note": "Both symbols show figure mode (patterns found, which is also valid)"
       }
@@ -116,29 +190,29 @@
     {
       "test_name": "HistoryScanner Activity Check (1D)",
       "success": true,
-      "timestamp": "2026-03-24T15:26:32.164575",
+      "timestamp": "2026-03-24T15:55:27.143838",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 164189,
+        "response_size": 164713,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
       }
     },
     {
       "test_name": "HistoryScanner Activity Check (4H)",
       "success": true,
-      "timestamp": "2026-03-24T15:26:32.357687",
+      "timestamp": "2026-03-24T15:55:27.300683",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 203246,
+        "response_size": 203789,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
       }
     },
     {
       "test_name": "HistoryScanner Activity",
       "success": false,
-      "timestamp": "2026-03-24T15:26:32.358376",
+      "timestamp": "2026-03-24T15:55:27.301390",
       "details": {
         "checked_responses": [
           "1D",
@@ -150,29 +224,29 @@
     {
       "test_name": "Display Gate Check (1D)",
       "success": true,
-      "timestamp": "2026-03-24T15:26:33.497838",
+      "timestamp": "2026-03-24T15:55:27.507441",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 164189,
+        "response_size": 164713,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
       }
     },
     {
       "test_name": "Display Gate Check (4H)",
       "success": true,
-      "timestamp": "2026-03-24T15:26:33.668671",
+      "timestamp": "2026-03-24T15:55:27.676780",
       "details": {
         "status_code": 200,
         "expected_status": 200,
-        "response_size": 203246,
+        "response_size": 203789,
         "url": "https://tech-analysis-17.preview.emergentagent.com/api/ta-engine/mtf/BTC"
       }
     },
     {
       "test_name": "Display Gate Patterns Found",
       "success": true,
-      "timestamp": "2026-03-24T15:26:33.669660",
+      "timestamp": "2026-03-24T15:55:27.677650",
       "details": {
         "patterns_found": [
           {
@@ -196,5 +270,5 @@
       }
     }
   ],
-  "timestamp": "2026-03-24T15:26:33.669838"
+  "timestamp": "2026-03-24T15:55:27.677983"
 }

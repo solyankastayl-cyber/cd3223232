@@ -1063,6 +1063,36 @@ class PerTimeframeBuilder:
             print(f"[PerTF] Interpretation error: {e}")
             interpretation = None
         
+        # =============================================
+        # NARRATIVE ENGINE — human-readable market story
+        # =============================================
+        try:
+            from modules.ta_engine.narrative_engine import build_market_narrative
+            
+            # Get context for narrative (safely)
+            volatility_value = None
+            if market_state:
+                if hasattr(market_state, 'volatility'):
+                    volatility_value = market_state.volatility
+                elif isinstance(market_state, dict):
+                    volatility_value = market_state.get("volatility")
+            
+            context_for_narrative = {
+                "volatility": volatility_value,
+                "regime": structure_context_dict.get("regime"),
+                "phase": structure_context_dict.get("phase"),
+            }
+            
+            narrative = build_market_narrative(
+                structure=structure_context_dict,
+                pattern=pattern_for_interp,
+                context=context_for_narrative,
+            )
+            print(f"[PerTF] Narrative: {narrative.get('short', '')[:60]}...")
+        except Exception as e:
+            print(f"[PerTF] Narrative error: {e}")
+            narrative = {"short": "Analyzing...", "full": "Market analysis in progress."}
+        
         return {
             "timeframe": timeframe,
             "symbol": symbol,
@@ -1072,6 +1102,9 @@ class PerTimeframeBuilder:
             
             # INTERPRETATION — human-readable TA analysis
             "interpretation": interpretation,
+            
+            # NARRATIVE — market story (NEW!)
+            "narrative": narrative,
             
             # Structure (use dict, not object)
             "structure_context": structure_context_dict,

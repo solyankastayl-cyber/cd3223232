@@ -99,17 +99,49 @@ def make_pattern(
 # ANCHOR BUILDER (shared utility)
 # ═══════════════════════════════════════════════════════════════
 
+def order_polygon_anchors(anchors: List[Dict]) -> List[Dict]:
+    """
+    Order anchors for correct polygon rendering.
+    
+    ECharts draws polygon as: point1 → point2 → point3 → point4
+    If order is wrong → crosses / garbage / broken figures
+    
+    Correct order:
+    - top-left → top-right → bottom-right → bottom-left
+    """
+    if len(anchors) < 4:
+        return anchors
+    
+    # Separate top (higher prices) and bottom (lower prices)
+    sorted_by_price = sorted(anchors, key=lambda x: x.get("price", 0), reverse=True)
+    top_two = sorted_by_price[:2]
+    bottom_two = sorted_by_price[2:]
+    
+    # Sort top by time (left to right)
+    top = sorted(top_two, key=lambda x: x.get("time", 0))
+    # Sort bottom by time reversed (right to left for polygon closure)
+    bottom = sorted(bottom_two, key=lambda x: x.get("time", 0), reverse=True)
+    
+    return top + bottom
+
+
 def build_anchors(highs: List[Dict], lows: List[Dict]) -> List[Dict]:
-    """Build polygon anchors from highs/lows"""
+    """Build polygon anchors from highs/lows - CORRECTLY ORDERED"""
     if not highs or not lows:
         return []
     
-    return [
-        {"time": highs[0]["time"], "price": highs[0]["price"]},   # Top-left
-        {"time": highs[-1]["time"], "price": highs[-1]["price"]}, # Top-right
-        {"time": lows[-1]["time"], "price": lows[-1]["price"]},   # Bottom-right
-        {"time": lows[0]["time"], "price": lows[0]["price"]},     # Bottom-left
+    # Sort by time
+    highs_sorted = sorted(highs, key=lambda x: x.get("time", 0))
+    lows_sorted = sorted(lows, key=lambda x: x.get("time", 0))
+    
+    anchors = [
+        {"time": highs_sorted[0]["time"], "price": highs_sorted[0]["price"]},   # Top-left
+        {"time": highs_sorted[-1]["time"], "price": highs_sorted[-1]["price"]}, # Top-right
+        {"time": lows_sorted[-1]["time"], "price": lows_sorted[-1]["price"]},   # Bottom-right
+        {"time": lows_sorted[0]["time"], "price": lows_sorted[0]["price"]},     # Bottom-left
     ]
+    
+    return order_polygon_anchors(anchors)
 
 
 def build_boundaries(highs: List[Dict], lows: List[Dict]) -> Dict:
@@ -117,19 +149,39 @@ def build_boundaries(highs: List[Dict], lows: List[Dict]) -> Dict:
     if not highs or not lows:
         return {}
     
+    # Sort by time for correct line drawing
+    highs_sorted = sorted(highs, key=lambda x: x.get("time", 0))
+    lows_sorted = sorted(lows, key=lambda x: x.get("time", 0))
+    
     return {
         "upper": {
-            "x1": highs[0]["time"],
-            "y1": highs[0]["price"],
-            "x2": highs[-1]["time"],
-            "y2": highs[-1]["price"],
+            "x1": highs_sorted[0]["time"],
+            "y1": highs_sorted[0]["price"],
+            "x2": highs_sorted[-1]["time"],
+            "y2": highs_sorted[-1]["price"],
         },
         "lower": {
-            "x1": lows[0]["time"],
-            "y1": lows[0]["price"],
-            "x2": lows[-1]["time"],
-            "y2": lows[-1]["price"],
+            "x1": lows_sorted[0]["time"],
+            "y1": lows_sorted[0]["price"],
+            "x2": lows_sorted[-1]["time"],
+            "y2": lows_sorted[-1]["price"],
         },
+    }
+
+
+def build_pattern_window(anchors: List[Dict]) -> Dict:
+    """Build time window for pattern (for zoom/focus)"""
+    if not anchors:
+        return {}
+    
+    times = [a.get("time", 0) for a in anchors]
+    prices = [a.get("price", 0) for a in anchors]
+    
+    return {
+        "start": min(times),
+        "end": max(times),
+        "price_high": max(prices),
+        "price_low": min(prices),
     }
 
 
