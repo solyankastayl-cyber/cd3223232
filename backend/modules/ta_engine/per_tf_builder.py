@@ -1233,13 +1233,25 @@ class PerTimeframeBuilder:
                 geo = geometry_contract
                 geo_source = "anchor_geometry"
                 pattern_type = primary_pattern.get("type") if primary_pattern else None
-                pattern_mode = "strict"
-                render_profile = {
-                    "opacity": 0.22,
-                    "lineWidth": 2.5,
-                    "dash": False,
-                    "fill": True,
-                }
+                
+                # Check if this is actually a loose pattern masquerading as strict
+                # PRO engine sets "mode" in geometry_contract
+                pattern_mode = geometry_contract.get("mode", "strict")
+                
+                if pattern_mode == "loose":
+                    render_profile = {
+                        "opacity": 0.10,
+                        "lineWidth": 1.5,
+                        "dash": True,
+                        "fill": True,
+                    }
+                else:
+                    render_profile = {
+                        "opacity": 0.22,
+                        "lineWidth": 2.5,
+                        "dash": False,
+                        "fill": True,
+                    }
             
             # Try PRO engine LOOSE pattern if no strict
             elif pro_pattern_payload and pro_pattern_payload.get("pattern"):
@@ -1273,17 +1285,21 @@ class PerTimeframeBuilder:
             
             if can_render:
                 # Update analysis mode
-                if pattern_mode == "strict":
-                    final["analysis_mode"] = "figure"
-                else:
-                    final["analysis_mode"] = "figure"  # Still figure, but loose
+                final["analysis_mode"] = "figure"
                 
-                # Update summary for loose patterns
+                # Update summary based on pattern mode
+                label = pattern_type.replace("_", " ").title() if pattern_type else "Pattern"
+                
                 if pattern_mode == "loose":
-                    label = pattern_type.replace("_", " ").title()
-                    state = pro_pattern_payload.get("pattern_meta", {}).get("state", "forming")
+                    state = "forming"
+                    if pro_pattern_payload and pro_pattern_payload.get("pattern_meta"):
+                        state = pro_pattern_payload["pattern_meta"].get("state", "forming")
                     final["summary"]["title"] = f"{label} Developing"
                     final["summary"]["text"] = f"A {label.lower()} formation is developing. Currently {state}."
+                else:
+                    # Strict pattern
+                    final["summary"]["title"] = f"{label} Detected"
+                    final["summary"]["text"] = f"A {label.lower()} pattern has been identified with high confidence."
                 
                 final["ui"] = {
                     "main_overlay": {
