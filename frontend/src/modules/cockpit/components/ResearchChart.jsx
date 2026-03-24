@@ -16,7 +16,7 @@
  * - EXECUTION (100) → pattern geometry (90) → structure (80) → levels → candles
  */
 
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import styled from 'styled-components';
 import { createChart, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import { MarketMechanicsRenderer } from '../../../components/chart-engine/MarketMechanicsLayer';
@@ -27,6 +27,7 @@ import ExecutionRenderer from './ExecutionRenderer';
 import { renderPatternGeometry } from './PatternGeometryRenderer';
 import { renderExecutionLayer } from './ExecutionVisualLayer';
 import SetupOverlay from './SetupOverlay';
+import PatternSVGOverlay from './PatternSVGOverlay';
 // V4 Pattern Renderer
 import { renderPattern, clearPattern } from '../../../chart/renderers/patternRenderer';
 
@@ -423,6 +424,10 @@ const ResearchChart = ({
     ema50Points: computedEMA50?.length || 0,
   });
 
+  // State for chart instance (needed for SVG overlay coordinate conversion)
+  const [chartInstance, setChartInstance] = useState(null);
+  const [priceSeriesInstance, setPriceSeriesInstance] = useState(null);
+
   useEffect(() => {
     if (!chartRef.current || candles.length === 0) return;
 
@@ -476,6 +481,9 @@ const ResearchChart = ({
     });
 
     chartInstanceRef.current = chart;
+    
+    // Save chart instance in state for SVG overlay
+    setChartInstance(chart);
 
     // 1. Add price series (candles/line)
     let priceSeries;
@@ -502,6 +510,9 @@ const ResearchChart = ({
         priceLineStyle: 2,
       });
     }
+    
+    // Save priceSeries for SVG overlay coordinate conversion
+    setPriceSeriesInstance(priceSeries);
 
     // Format and set candle data
     const seen = new Set();
@@ -1206,303 +1217,21 @@ const ResearchChart = ({
     }
 
     // =========================================================
-    // 4.5 PATTERN RENDER CONTRACT — Full Pattern Visualization
+    // 4.5 PATTERN GEOMETRY — NOW RENDERED VIA SVG OVERLAY
     // =========================================================
-    // ENABLED: Render pattern lines from pattern_render_contract
+    // Pattern visualization (polylines, shapes) is now handled by
+    // PatternSVGOverlay component which renders SVG elements on top
+    // of the chart canvas. This approach:
+    // - Supports true polylines (P1 → Valley → P2)
+    // - Works with chart zoom/pan via coordinate conversion
+    // - Not limited by lightweight-charts capabilities
+    //
+    // Old priceLine/markers approach removed as it couldn't render
+    // proper geometric shapes.
     
-    const renderContract = data?.pattern_render_contract;
-    
-    if (renderContract && showPatternOverlay) {
-      try {
-        console.log('[ResearchChart] Pattern rendering:', renderContract.type, renderContract.mode);
-        
-        // Clear any previous pattern renders
-        if (window._patternRenderObjects) {
-          clearPattern(chart, window._patternRenderObjects);
-          window._patternRenderObjects = null;
-        }
-        
-        const patternType = renderContract.type;
-        const anchors = renderContract.anchors || [];
-        const boundaries = renderContract.meta?.boundaries || {};
-        const renderProfile = renderContract.render_profile || {};
-        const isLoose = renderContract.mode === 'loose';
-        
-        // Color based on bias
-        const patternColor = renderContract.bias === 'bullish' ? '#22c55e' : 
-                            renderContract.bias === 'bearish' ? '#ef4444' : 
-                            '#3b82f6';
-        
-        const lineStyle = isLoose ? 2 : 0; // 2 = dashed, 0 = solid
-        const lineWidth = renderProfile.lineWidth || (isLoose ? 1.5 : 2.5);
-        
-        // Helper to parse time
-        const parseTime = (t) => t > 1e12 ? Math.floor(t / 1000) : t;
-        
-        // ═══════════════════════════════════════════════════════════════
-        // RENDER BASED ON PATTERN TYPE
-        // ═══════════════════════════════════════════════════════════════
-        
-        if (patternType === 'double_top' || patternType === 'double_bottom') {
-          // DOUBLE TOP / DOUBLE BOTTOM — Polyline: peak1 → valley → peak2
-          const neckline = boundaries.neckline || renderContract.meta?.neckline;
-          
-          console.log('[ResearchChart] DT anchors:', anchors);
-          console.log('[ResearchChart] DT neckline:', neckline);
-          
-          if (anchors.length >= 2 && neckline) {
-            // Sort anchors by time to get correct order
-            const sortedByTime = [...anchors].sort((a, b) => parseTime(a.time) - parseTime(b.time));
-            
-            // For double_top: peaks are higher prices, valley is between them
-            const sortedByPrice = [...anchors].sort((a, b) => 
-              patternType === 'double_top' ? b.price - a.price : a.price - b.price
-            );
-            
-            // Get peaks (top 2 by price for double_top)
-            const peaks = sortedByPrice.slice(0, 2).sort((a, b) => parseTime(a.time) - parseTime(b.time));
-            const peak1 = peaks[0];
-            const peak2 = peaks[1];
-            
-            // Valley is either explicit anchor or the neckline point
-            let valley = anchors.find(a => Math.abs(a.price - neckline) < 100);
-            if (!valley) {
-              valley = {
-                time: Math.floor((parseTime(peak1.time) + parseTime(peak2.time)) / 2),
-                price: neckline
-              };
-            }
-            
-            console.log('[ResearchChart] DT peak1:', peak1, 'valley:', valley, 'peak2:', peak2);
-            
-            // ═══════════════════════════════════════════════════════════════
-            // USE MARKERS FOR PATTERN VISUALIZATION (stable approach)
-            // Markers: Peak1, Valley (with lines implied by position)
-            // ═══════════════════════════════════════════════════════════════
-            
-            // Create pattern visualization with price lines
-            // Peak level (resistance)
-            const peakLevel = Math.max(peak1.price, peak2.price);
-            priceSeries.createPriceLine({
-              price: peakLevel,
-              color: patternColor,
-              lineWidth: 2,
-              lineStyle: 0, // Solid
-              axisLabelVisible: true,
-              title: 'Resistance',
-            });
-            
-            // Neckline (support)
-            priceSeries.createPriceLine({
-              price: neckline,
-              color: '#00e5ff',
-              lineWidth: 2,
-              lineStyle: 2, // Dashed
-              axisLabelVisible: true,
-              title: 'Neckline',
-            });
-            
-            // Add markers at key points to show pattern structure
-            const patternMarkers = [
-              // Peak 1 marker
-              {
-                time: parseTime(peak1.time),
-                position: 'aboveBar',
-                color: patternColor,
-                shape: 'arrowDown',
-                text: 'P1',
-              },
-              // Peak 2 marker
-              {
-                time: parseTime(peak2.time),
-                position: 'aboveBar',
-                color: patternColor,
-                shape: 'arrowDown',
-                text: 'P2',
-              },
-              // Valley marker
-              {
-                time: parseTime(valley.time),
-                position: 'belowBar',
-                color: '#00e5ff',
-                shape: 'arrowUp',
-                text: 'V',
-              },
-            ];
-            
-            // Use createSeriesMarkers (new API)
-            createSeriesMarkers(priceSeries, patternMarkers.sort((a, b) => a.time - b.time));
-            
-            console.log('[ResearchChart] DT pattern with markers + levels RENDERED');
-          }
-          
-        } else if (patternType.includes('wedge') || patternType.includes('triangle') || patternType.includes('range') || patternType.includes('channel')) {
-          // WEDGE / TRIANGLE / RANGE / CHANNEL — Upper + Lower boundaries
-          const upper = boundaries.upper;
-          const lower = boundaries.lower;
-          
-          if (upper && lower) {
-            console.log('[ResearchChart] Range/Wedge upper:', upper, 'lower:', lower);
-            
-            // For RANGE: Use horizontal price lines (more stable)
-            if (patternType.includes('range')) {
-              // Upper boundary (resistance)
-              const upperPrice = Math.max(upper.y1, upper.y2);
-              priceSeries.createPriceLine({
-                price: upperPrice,
-                color: patternColor,
-                lineWidth: lineWidth,
-                lineStyle: isLoose ? 2 : 0,
-                axisLabelVisible: true,
-                title: 'Resistance',
-              });
-              
-              // Lower boundary (support)
-              const lowerPrice = Math.min(lower.y1, lower.y2);
-              priceSeries.createPriceLine({
-                price: lowerPrice,
-                color: patternColor,
-                lineWidth: lineWidth,
-                lineStyle: isLoose ? 2 : 0,
-                axisLabelVisible: true,
-                title: 'Support',
-              });
-              
-              console.log('[ResearchChart] Range price lines rendered:', upperPrice, lowerPrice);
-            } else {
-              // For WEDGE/TRIANGLE: Use diagonal LineSeries
-              const upperSeries = chart.addSeries(LineSeries, {
-                color: patternColor,
-                lineWidth: lineWidth,
-                lineStyle: lineStyle,
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-              });
-              
-              upperSeries.setData([
-                { time: parseTime(upper.x1), value: upper.y1 },
-                { time: parseTime(upper.x2), value: upper.y2 },
-              ].sort((a, b) => a.time - b.time));
-              
-              const lowerSeries = chart.addSeries(LineSeries, {
-                color: patternColor,
-                lineWidth: lineWidth,
-                lineStyle: lineStyle,
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-              });
-              
-              lowerSeries.setData([
-                { time: parseTime(lower.x1), value: lower.y1 },
-                { time: parseTime(lower.x2), value: lower.y2 },
-              ].sort((a, b) => a.time - b.time));
-              
-              console.log('[ResearchChart] Wedge/Triangle lines rendered:', patternType);
-            }
-          } else if (anchors.length >= 4) {
-            // Fallback: render from anchors if no boundaries
-            const sorted = [...anchors].sort((a, b) => a.price - b.price);
-            const topAnchors = sorted.slice(-2).sort((a, b) => parseTime(a.time) - parseTime(b.time));
-            const bottomAnchors = sorted.slice(0, 2).sort((a, b) => parseTime(a.time) - parseTime(b.time));
-            
-            // Upper line
-            const upperSeries = chart.addSeries(LineSeries, {
-              color: patternColor,
-              lineWidth: lineWidth,
-              lineStyle: lineStyle,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            });
-            
-            upperSeries.setData([
-              { time: parseTime(topAnchors[0].time), value: topAnchors[0].price },
-              { time: parseTime(topAnchors[1].time), value: topAnchors[1].price },
-            ]);
-            
-            // Lower line
-            const lowerSeries = chart.addSeries(LineSeries, {
-              color: patternColor,
-              lineWidth: lineWidth,
-              lineStyle: lineStyle,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            });
-            
-            lowerSeries.setData([
-              { time: parseTime(bottomAnchors[0].time), value: bottomAnchors[0].price },
-              { time: parseTime(bottomAnchors[1].time), value: bottomAnchors[1].price },
-            ]);
-            
-            console.log('[ResearchChart] Pattern anchors rendered:', patternType);
-          }
-          
-        } else if (patternType === 'head_shoulders' || patternType === 'inverse_head_shoulders') {
-          // HEAD & SHOULDERS — left shoulder, head, right shoulder + neckline
-          if (anchors.length >= 3) {
-            const sorted = [...anchors].sort((a, b) => parseTime(a.time) - parseTime(b.time));
-            
-            // Connect shoulders and head
-            const shouldersSeries = chart.addSeries(LineSeries, {
-              color: patternColor,
-              lineWidth: lineWidth,
-              lineStyle: lineStyle,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            });
-            
-            shouldersSeries.setData(
-              sorted.map(a => ({ time: parseTime(a.time), value: a.price }))
-            );
-            
-            // Neckline if available
-            const neckline = boundaries.neckline || renderContract.meta?.neckline;
-            if (neckline) {
-              const necklineSeries = chart.addSeries(LineSeries, {
-                color: '#00e5ff',
-                lineWidth: 2,
-                lineStyle: 2,
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-              });
-              
-              necklineSeries.setData([
-                { time: parseTime(sorted[0].time), value: neckline },
-                { time: parseTime(sorted[sorted.length - 1].time), value: neckline },
-              ]);
-            }
-            
-            console.log('[ResearchChart] Head & Shoulders rendered');
-          }
-        }
-        
-        // Add pattern label marker
-        if (anchors.length > 0) {
-          const avgTime = Math.floor(anchors.reduce((s, a) => s + parseTime(a.time), 0) / anchors.length);
-          
-          const patternMarker = {
-            time: avgTime,
-            position: 'aboveBar',
-            color: patternColor,
-            shape: 'arrowDown',
-            text: patternType.replace(/_/g, ' ').split(' ').map(w => w[0]?.toUpperCase() || '').join(''),
-          };
-          
-          try {
-            priceSeries.setMarkers([patternMarker]);
-          } catch (e) {
-            console.warn('[ResearchChart] Marker failed:', e);
-          }
-        }
-        
-      } catch (e) {
-        console.warn('[ResearchChart] Pattern render failed:', e);
-      }
+    if (data?.pattern_render_contract) {
+      console.log('[ResearchChart] Pattern detected:', data.pattern_render_contract.type, 
+                  '- rendered via SVG overlay');
     }
 
     // =========================================================
@@ -1735,6 +1464,19 @@ const ResearchChart = ({
   return (
     <ChartWrapper>
       <ChartContainer ref={chartRef} $height={height} />
+      
+      {/* ═══════════════════════════════════════════════════════════════
+          SVG PATTERN OVERLAY — True geometry rendering (polylines, shapes)
+          Uses chart coordinate conversion for accurate positioning
+          ═══════════════════════════════════════════════════════════════ */}
+      {showPatternOverlay && chartInstance && priceSeriesInstance && data?.pattern_render_contract && (
+        <PatternSVGOverlay 
+          chart={chartInstance} 
+          priceSeries={priceSeriesInstance}
+          renderContract={data.pattern_render_contract}
+        />
+      )}
+      
       {/* EXECUTION LAYER — Overlay badge only, NOT blocking */}
       <ExecutionRenderer 
         execution={execution} 
