@@ -85,6 +85,7 @@ from modules.ta_engine.geometry.pattern_geometry_builder import get_pattern_geom
 from modules.ta_engine.geometry.wedge_shape_validator import get_wedge_shape_validator
 from modules.ta_engine.geometry.main_render_gate import get_main_render_gate
 from modules.ta_engine.geometry.geometry_normalizer import get_geometry_normalizer, normalize_pattern
+from modules.ta_engine.geometry.pattern_projection_engine import get_pattern_projection_engine
 
 
 # Singleton for visualization engine
@@ -695,6 +696,22 @@ class PerTimeframeBuilder:
                                       f"changes={norm_result.changes}")
                         except Exception as norm_err:
                             print(f"[PerTF] ⚠️ Normalization skipped: {norm_err}")
+                        
+                        # ═══════════════════════════════════════════════════════════
+                        # PATTERN PROJECTION — Build full projection with targets
+                        # ═══════════════════════════════════════════════════════════
+                        try:
+                            projection_engine = get_pattern_projection_engine()
+                            # Get current price from last candle
+                            current_price = candles[-1]["close"] if candles else None
+                            projection = projection_engine.build(pattern_render_contract, current_price)
+                            if projection:
+                                pattern_render_contract["projection_contract"] = projection
+                                print(f"[PerTF] 🎯 Projection built: stage={projection.get('stage')}, "
+                                      f"primary={projection.get('projection', {}).get('primary', {}).get('direction')}, "
+                                      f"target={projection.get('projection', {}).get('primary', {}).get('target')}")
+                        except Exception as proj_err:
+                            print(f"[PerTF] ⚠️ Projection skipped: {proj_err}")
                         
                         # Log
                         print(f"[PerTF] V2 RESULT: {{"
