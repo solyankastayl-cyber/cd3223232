@@ -39,6 +39,9 @@ from modules.ta_engine.setup.pattern_selector import get_pattern_selector
 from modules.ta_engine.setup.structure_builder import get_structure_builder
 from modules.ta_engine.setup.pattern_engine_v3 import get_pattern_engine_v3
 
+# NEW: Anchor-based pattern engine (PRO level)
+from modules.ta_engine.anchor_pattern_engine import get_best_pattern, detect_patterns
+
 # Get singleton instance
 pattern_selector = get_pattern_selector()
 from modules.ta_engine.setup.pattern_expiration import pattern_expiration_engine
@@ -725,6 +728,91 @@ class PerTimeframeBuilder:
                 print(f"[PerTF] Fallback message: {display_message}")
         else:
             display_message = "Market structure is developing. No dominant pattern detected."
+        
+        # =============================================
+        # STEP 5d: ANCHOR ENGINE (PRO LEVEL)
+        # =============================================
+        # If V2 pipeline failed, try anchor-based detection
+        anchor_pattern = None
+        if pattern_render_contract is None:
+            try:
+                print(f"[PerTF] Step 5d: Anchor-based pattern detection...")
+                anchor_result = get_best_pattern(candles)
+                
+                if anchor_result and anchor_result.is_valid:
+                    print(f"[PerTF] ✅ Anchor engine found: {anchor_result.pattern_type} "
+                          f"(conf={anchor_result.confidence:.2f})")
+                    
+                    # Convert to render contract format
+                    anchor_pattern = {
+                        "type": anchor_result.pattern_type,
+                        "engine": "ANCHOR_ENGINE_V1",
+                        "source": "anchor_pattern_engine",
+                        "confidence": anchor_result.confidence,
+                        "anchors": anchor_result.anchors,
+                        "boundaries": [
+                            {
+                                "id": "upper_line",
+                                "kind": "trendline",
+                                "x1": anchor_result.upper[0]["time"],
+                                "y1": anchor_result.upper[0]["price"],
+                                "x2": anchor_result.upper[-1]["time"],
+                                "y2": anchor_result.upper[-1]["price"],
+                            },
+                            {
+                                "id": "lower_line",
+                                "kind": "trendline",
+                                "x1": anchor_result.lower[0]["time"],
+                                "y1": anchor_result.lower[0]["price"],
+                                "x2": anchor_result.lower[-1]["time"],
+                                "y2": anchor_result.lower[-1]["price"],
+                            },
+                        ],
+                        "window": anchor_result.window,
+                        "breakout_level": anchor_result.breakout_level,
+                        "display_approved": True,
+                        "geometry_contract": {
+                            "is_valid": True,
+                            "anchors": anchor_result.anchors,
+                            "upper_boundary": {
+                                "x1": anchor_result.upper[0]["time"],
+                                "y1": anchor_result.upper[0]["price"],
+                                "x2": anchor_result.upper[-1]["time"],
+                                "y2": anchor_result.upper[-1]["price"],
+                            },
+                            "lower_boundary": {
+                                "x1": anchor_result.lower[0]["time"],
+                                "y1": anchor_result.lower[0]["price"],
+                                "x2": anchor_result.lower[-1]["time"],
+                                "y2": anchor_result.lower[-1]["price"],
+                            },
+                            "boundaries": {
+                                "upper": {
+                                    "x1": anchor_result.upper[0]["time"],
+                                    "y1": anchor_result.upper[0]["price"],
+                                    "x2": anchor_result.upper[-1]["time"],
+                                    "y2": anchor_result.upper[-1]["price"],
+                                },
+                                "lower": {
+                                    "x1": anchor_result.lower[0]["time"],
+                                    "y1": anchor_result.lower[0]["price"],
+                                    "x2": anchor_result.lower[-1]["time"],
+                                    "y2": anchor_result.lower[-1]["price"],
+                                },
+                            },
+                            "window": anchor_result.window,
+                        },
+                    }
+                    
+                    # Use anchor pattern as main
+                    pattern_render_contract = anchor_pattern
+                    geometry_contract_dict = anchor_pattern["geometry_contract"]
+                    display_message = f"{anchor_result.pattern_type.replace('_', ' ').title()} detected"
+                else:
+                    print(f"[PerTF] Anchor engine: No valid pattern found")
+                    
+            except Exception as e:
+                print(f"[PerTF] Anchor engine error: {e}")
         
         # =============================================
         # STEP 6: INDICATORS & TA CONTEXT
