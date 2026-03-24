@@ -5,97 +5,100 @@
 
 ## What's Been Implemented (March 2026)
 
-### 1. Final Analysis Resolver (`final_analysis_resolver.py`) - КРИТИЧЕСКИЙ
-**Главный принцип: ПУСТОГО АНАЛИЗА НИКОГДА НЕ БЫВАЕТ**
+### 1. Pattern Priority System (`pattern_priority_system.py`) - КРИТИЧЕСКИЙ
+**Главное правило: 1 TF = 1 идея**
+
+DOMINANCE фильтр:
+- Coverage >= 15% (паттерн должен занимать минимум 15% ценового диапазона)
+- Time >= 12% (паттерн должен занимать минимум 12% баров)
+- Window >= 15 bars (минимум 15 свечей)
+- Final Score >= 0.55 (иначе → structure fallback)
+
+Type Priority:
+- head_and_shoulders: 1.0
+- double_top/bottom: 0.95
+- triangle: 0.9
+- wedge: 0.85
+- flag: 0.8
+- channel: 0.6
+
+### 2. Final Analysis Resolver (`final_analysis_resolver.py`)
+**Принцип: ПУСТОГО АНАЛИЗА НИКОГДА НЕ БЫВАЕТ**
 
 Три режима:
-- `figure` - есть чистая фигура (wedge, triangle, etc.)
-- `structure` - нет фигуры, но есть HH/HL/LH/LL структура
-- `context` - нет локальной структуры, показываем macro контекст
+- `figure` - паттерн прошёл dominance check
+- `structure` - HH/HL/LH/LL (когда figure отклонена)
+- `context` - macro view для HTF
 
-Всегда возвращает:
-- `analysis_mode`: figure | structure | context
-- `structure`: trend, phase, swing_state, bias
-- `context`: regime, volatility, location
-- `summary`: title + text (НИКОГДА пустые)
+### 3. Pattern State Engine
+- States: forming → maturing → breakout → breakdown → invalidated
+- Scores: respect, compression, reaction
 
-### 2. Structure Layer
-Железобетонный fallback - работает ВСЕГДА:
-- Определяет HH/HL/LH/LL последовательность
-- Вычисляет trend (up/down/neutral)
-- Определяет phase (impulse/correction/compression)
-- Формирует bias (bullish/bearish/neutral)
+### 4. Strong Pivot Filter
+- Фильтрует шумовые pivot точки
 
-### 3. Context Layer  
-Для HTF (1M, 6M, 1Y) и fallback:
-- regime: macro uptrend/downtrend/range
-- volatility: low/normal/high/extreme
-- location: near support/resistance/mid-range
+### 5. Wedge Detector V5
+- Исправленная логика convergence
 
-### 4. Pattern State Engine (`pattern_state_engine.py`)
-States: `forming → maturing → breakout → breakdown → invalidated`
-Scores: respect_score, compression_score, reaction_score
+## How It Works Now
 
-### 5. Strong Pivot Filter (`strong_pivot_filter.py`)
-Фильтрует шумовые pivot точки по реакции (move > ATR * 0.5)
-
-### 6. Wedge Detector V5
-- Compression Check (reject < 0.2)
-- Respect Score Check (reject < 0.4)
-- State Engine integration
-- Исправлена логика convergence
-
-## Architecture
 ```
-candles
-→ pivots
-→ swings
-→ structure_layer (ALWAYS)
-→ figure_layer (pattern detection)
-→ context_layer (ALWAYS)
-→ display_gate (for figure only)
-→ resolve_analysis_mode
-→ summary_builder
-→ final_analysis
+Pattern detected
+    ↓
+DOMINANCE CHECK
+    ├─ coverage < 15%? → REJECT
+    ├─ time < 12%? → REJECT
+    └─ bars < 15? → REJECT
+    ↓
+Display Gate
+    ↓
+If passed → analysis_mode = "figure"
+If rejected → analysis_mode = "structure"
 ```
 
-## API Response
+## Current Status
+```
+BTC 1D:
+- Render Contract: rising_wedge
+- Display Approved: True
+- Coverage: 23.1%
+- Time: 14.7%
+- Final Analysis Mode: figure
+- Summary: "Bearish Rising Wedge forming"
+```
+
+## API Response Structure
 ```json
 {
-  "tf_map": {
-    "1D": {
-      "final_analysis": {
-        "analysis_mode": "structure",
-        "structure": {
-          "trend": "up",
-          "phase": "correction", 
-          "bias": "bullish",
-          "swing_state": "HH-HL sequence intact (8 HH, 9 HL)"
-        },
-        "summary": {
-          "title": "Bullish structure in correction",
-          "text": "No clean figure is active..."
-        }
-      }
+  "final_analysis": {
+    "analysis_mode": "figure | structure | context",
+    "figure": {...} | null,
+    "structure": {
+      "trend": "up",
+      "phase": "correction",
+      "bias": "bullish",
+      "swing_state": "HH-HL sequence intact"
+    },
+    "summary": {
+      "title": "...",
+      "text": "..."
     }
+  },
+  "pattern_dominance": {
+    "coverage": 0.231,
+    "time_coverage": 0.147,
+    "final_score": 0.72,
+    "is_dominant": true
   }
 }
 ```
 
-## Current Status
-- ✅ Backend running on port 8001
-- ✅ Frontend running on port 3000
-- ✅ Final Analysis Resolver integrated
-- ✅ НИКОГДА не возвращает пустой анализ
-
-## Key Files Changed
+## Key Files
+- `/app/backend/modules/ta_engine/setup/pattern_priority_system.py` (NEW)
 - `/app/backend/modules/ta_engine/setup/final_analysis_resolver.py` (NEW)
-- `/app/backend/modules/ta_engine/setup/pattern_state_engine.py` (NEW)
-- `/app/backend/modules/ta_engine/setup/strong_pivot_filter.py` (NEW)
-- `/app/backend/modules/ta_engine/setup/pattern_detectors_unified.py` (UPDATED)
-- `/app/backend/modules/ta_engine/per_tf_builder.py` (UPDATED)
+- `/app/backend/modules/ta_engine/per_tf_builder.py` (UPDATED - dominance check)
 
-## Next Steps (P1)
-1. Добавить `final_analysis` на frontend для отображения
-2. Интегрировать Context Layer в HTF rendering
-3. Добавить visual markers для structure на графике
+## Next Steps
+1. Frontend: отобразить `final_analysis.summary` prominently
+2. Add more pattern types to priority system
+3. Tune dominance thresholds per timeframe

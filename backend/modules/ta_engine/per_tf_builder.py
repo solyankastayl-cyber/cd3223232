@@ -71,6 +71,9 @@ from modules.ta_engine.structure import StructureVisualizationBuilder
 # Final Analysis Resolver - NEVER returns empty
 from modules.ta_engine.setup.final_analysis_resolver import get_final_analysis_resolver
 
+# Pattern Priority System - selects ONE dominant pattern
+from modules.ta_engine.setup.pattern_priority_system import get_pattern_priority_system
+
 
 # Singleton for visualization engine
 _indicator_viz_engine = None
@@ -474,6 +477,33 @@ class PerTimeframeBuilder:
         print(f"[PerTF] Pattern selected: {primary_pattern.type if primary_pattern else 'None'}")
         
         # =============================================
+        # STEP 5A: DOMINANCE FILTER (NEW!)
+        # Pattern must be DOMINANT (coverage > 20%)
+        # Otherwise → structure fallback
+        # =============================================
+        dominance_score = None
+        pattern_rejections = []
+        
+        if primary_pattern:
+            priority_system = get_pattern_priority_system()
+            dominant_pattern, dominance_score, pattern_rejections = priority_system.select_primary(
+                [primary_pattern] + (alternatives or []),
+                candles,
+                timeframe,
+            )
+            
+            if dominant_pattern:
+                # Pattern passes dominance check
+                primary_pattern = dominant_pattern
+                print(f"[PerTF] ✅ DOMINANT pattern: {primary_pattern.type} "
+                      f"(coverage={dominance_score.coverage:.1%}, score={dominance_score.final_score:.2f})")
+            else:
+                # Pattern rejected - too small or low score → structure fallback
+                print(f"[PerTF] ❌ Pattern rejected (not dominant): {pattern_rejections}")
+                primary_pattern = None
+                alternatives = []
+        
+        # =============================================
         # STEP 5B: PATTERN RENDER CONTRACT V8 (HISTORY SCAN)
         # =============================================
         print(f"[PerTF] Step 5b: Scanning history for patterns...")
@@ -549,17 +579,87 @@ class PerTimeframeBuilder:
                     pattern_render_contract["source"] = "TA_PIPELINE_V2"
                     pattern_render_contract["pipeline_source"] = "v2"
                     
-                    # Log debug info
+                    # ═══════════════════════════════════════════════════════════
+                    # DOMINANCE CHECK FOR V2 PATTERNS
+                    # ═══════════════════════════════════════════════════════════
+                    total_range = max(c["high"] for c in candles) - min(c["low"] for c in candles)
+                    
+                    # Get pattern range from boundaries
+                    boundaries = pattern_render_contract.get("boundaries", [])
                     debug = pattern_render_contract.get("debug", {})
-                    print(f"[PerTF] V2 RESULT: {{"
-                          f"tf: '{timeframe}', "
-                          f"pipeline: 'v2', "
-                          f"selected_pattern: '{pattern_render_contract.get('type')}', "
-                          f"score: {pattern_render_contract.get('combined_score', 0):.2f}, "
-                          f"touches_upper: {debug.get('touch_upper', 'N/A')}, "
-                          f"touches_lower: {debug.get('touch_lower', 'N/A')}, "
-                          f"window_bars: {debug.get('window_bars', 'N/A')}"
-                          f"}}")
+                    
+                    # Extract prices from boundaries list
+                    upper_val = 0
+                    lower_val = float('inf')
+                    
+                    if isinstance(boundaries, list):
+                        for b in boundaries:
+                            if isinstance(b, dict):
+                                b_id = b.get("id", "")
+                                y1 = b.get("y1", 0)
+                                y2 = b.get("y2", 0)
+                                
+                                if "upper" in b_id:
+                                    upper_val = max(upper_val, y1, y2)
+                                elif "lower" in b_id:
+                                    lower_val = min(lower_val, y1, y2)
+                    
+                    # Reset lower_val if not found
+                    if lower_val == float('inf'):
+                        lower_val = 0
+                    
+                    window_bars = debug.get("window_bars", 20)
+                    
+                    print(f"[PerTF] V2 dominance check: total_range={total_range:.0f}, upper={upper_val:.0f}, lower={lower_val:.0f}")
+                    
+                    if upper_val > 0 and lower_val > 0 and total_range > 0:
+                        pattern_range = abs(upper_val - lower_val)
+                        coverage = pattern_range / total_range
+                        time_coverage = window_bars / len(candles) if candles else 0
+                        
+                        print(f"[PerTF] V2 coverage: pattern_range={pattern_range:.0f}, coverage={coverage:.1%}, time={time_coverage:.1%}")
+                        
+                        # DOMINANCE THRESHOLDS:
+                        # - coverage >= 15% of price range
+                        # - time >= 12% of bars (15+ bars on 150 candle chart)
+                        # - window >= 15 bars minimum
+                        MIN_COVERAGE = 0.15
+                        MIN_TIME = 0.12
+                        MIN_BARS = 15
+                        
+                        if coverage < MIN_COVERAGE:
+                            print(f"[PerTF] ❌ V2 pattern rejected: coverage {coverage:.1%} < {MIN_COVERAGE:.0%}")
+                            pattern_render_contract = None
+                            display_message = "Pattern too small to be significant."
+                        elif time_coverage < MIN_TIME:
+                            print(f"[PerTF] ❌ V2 pattern rejected: time coverage {time_coverage:.1%} < {MIN_TIME:.0%}")
+                            pattern_render_contract = None
+                            display_message = "Pattern window too short."
+                        elif window_bars < MIN_BARS:
+                            print(f"[PerTF] ❌ V2 pattern rejected: only {window_bars} bars < {MIN_BARS}")
+                            pattern_render_contract = None
+                            display_message = "Pattern window too short."
+                        else:
+                            print(f"[PerTF] ✅ V2 pattern passes dominance: coverage={coverage:.1%}, time={time_coverage:.1%}")
+                    else:
+                        print(f"[PerTF] ⚠️ Cannot extract boundaries, checking window_bars={window_bars}")
+                        if window_bars < 15:
+                            print(f"[PerTF] ❌ V2 pattern rejected: only {window_bars} bars")
+                            pattern_render_contract = None
+                            display_message = "Pattern window too short."
+                    
+                    if pattern_render_contract:
+                        # Log debug info
+                        debug = pattern_render_contract.get("debug", {})
+                        print(f"[PerTF] V2 RESULT: {{"
+                              f"tf: '{timeframe}', "
+                              f"pipeline: 'v2', "
+                              f"selected_pattern: '{pattern_render_contract.get('type')}', "
+                              f"score: {pattern_render_contract.get('combined_score', 0):.2f}, "
+                              f"touches_upper: {debug.get('touch_upper', 'N/A')}, "
+                              f"touches_lower: {debug.get('touch_lower', 'N/A')}, "
+                              f"window_bars: {debug.get('window_bars', 'N/A')}"
+                              f"}}")
                 else:
                     print(f"[PerTF] V2: No pattern found for {timeframe}")
                     display_message = "No dominant pattern detected."
@@ -582,6 +682,11 @@ class PerTimeframeBuilder:
                 print(f"[PerTF] ✅ Display Gate PASSED: {pattern_render_contract.get('type')}")
                 pattern_render_contract["display_approved"] = True
                 pattern_render_contract["display_gate_scores"] = gate_result.gate_scores
+                
+                # V2 pattern passed all checks - use it as primary for final_analysis
+                # Convert render contract to primary_pattern format
+                primary_pattern = None  # Will be handled separately
+                
             else:
                 print(f"[PerTF] ❌ Display Gate REJECTED: {gate_result.reason}")
                 # Keep pattern as candidate but mark as not displayable
@@ -820,6 +925,10 @@ class PerTimeframeBuilder:
             "alternative_patterns": [a.to_dict() for a in alternatives] if alternatives else [],
             "alternative_render_contracts": [self._clean_pattern_for_response(a) for a in alt_render_contracts],  # NEW: alternatives render-ready
             
+            # Dominance info (why pattern was/wasn't shown)
+            "pattern_dominance": dominance_score.to_dict() if dominance_score else None,
+            "pattern_rejections": pattern_rejections if pattern_rejections else None,
+            
             # Display Gate result
             "display_message": display_message,  # Fallback message when no pattern shown
             "candidate_pattern": self._clean_pattern_for_response(candidate_pattern),  # Pattern that failed gate (cleaned)
@@ -847,10 +956,14 @@ class PerTimeframeBuilder:
             # ═══════════════════════════════════════════════════════════════
             # analysis_mode: figure | structure | context
             # ALWAYS returns meaningful analysis even if no pattern found
+            # Use V2 pattern_render_contract if it passed all checks, otherwise primary_pattern
             "final_analysis": self._build_final_analysis(
                 timeframe=timeframe,
                 candles=candles,
-                primary_pattern=primary_pattern.to_dict() if primary_pattern else None,
+                primary_pattern=(
+                    pattern_render_contract if pattern_render_contract and pattern_render_contract.get("display_approved")
+                    else (primary_pattern.to_dict() if primary_pattern else None)
+                ),
             ),
             
             # Meta
