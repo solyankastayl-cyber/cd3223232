@@ -1,16 +1,21 @@
 /**
- * PatternSVGOverlay.jsx — МИНИМАЛИСТИЧНАЯ ВЕРСИЯ
+ * PatternSVGOverlay.jsx — ПРАВИЛЬНЫЙ DOUBLE TOP
  * 
- * Double Top:
- * - M-shape (P1 → V → P2)
- * - Neckline
- * - Косая стрелка к target (вправо-вниз)
- * - Target line до края + цена + %
+ * Логика:
+ * 1. P1, V — реальные точки
+ * 2. P2 — ПРОЕКЦИЯ (симметрично P1 относительно V по времени)
+ * 3. Линия от P2 к neckline (завершение фигуры)
+ * 4. Стрелка prediction от neckline к target
  * 
- * БЕЗ:
- * - Probability box
- * - Invalid line
- * - Лишних элементов
+ * Структура:
+ *   P1 -------- P2
+ *    \        /
+ *     \      /
+ *      \    /
+ *       \  /
+ *        V
+ *        |
+ *        ↓ target
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -27,13 +32,11 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
       const timeScale = chart.timeScale();
       if (!timeScale) return [];
       
-      // Time normalization (ms → s)
       const normalizeTime = (t) => {
         if (!t) return t;
         return t > 9999999999 ? Math.floor(t / 1000) : t;
       };
       
-      // Coordinate converters
       const toX = (time) => timeScale.timeToCoordinate(normalizeTime(time));
       const toY = (price) => {
         try {
@@ -43,158 +46,180 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         }
       };
       
-      // Get chart width for extending lines to edge
-      const chartWidth = chart.timeScale().width() || 800;
-      
       const patternType = renderContract.type || '';
       const anchors = renderContract.anchors || {};
       const meta = renderContract.meta || {};
       
       // ═══════════════════════════════════════════════════════════════
-      // DOUBLE TOP / DOUBLE BOTTOM
+      // DOUBLE TOP — ПОЛНАЯ ФИГУРА
       // ═══════════════════════════════════════════════════════════════
       if (patternType === 'double_top' || patternType === 'double_bottom') {
         const isTop = patternType === 'double_top';
         
-        // Get anchor points
+        // Получаем точки
         let p1, valley, p2;
+        let p2IsProjected = false; // P2 спроецирован или реальный?
         
-        if (anchors.p1 && anchors.p2) {
+        if (anchors.p1 && anchors.p2 && anchors.valley) {
+          // Все три точки есть
           p1 = anchors.p1;
           p2 = anchors.p2;
           valley = anchors.valley;
-        } else if (Array.isArray(renderContract.anchors)) {
+        } else if (anchors.p1 && anchors.valley) {
+          // Есть P1 и V — проецируем P2 симметрично
+          p1 = anchors.p1;
+          valley = anchors.valley;
+          
+          // P2 симметрично P1 относительно V по времени
+          const timeDiff = valley.time - p1.time;
+          p2 = {
+            time: valley.time + timeDiff,
+            price: p1.price // Та же цена (double = две одинаковые вершины)
+          };
+          p2IsProjected = true;
+        } else if (Array.isArray(renderContract.anchors) && renderContract.anchors.length >= 2) {
           const arr = renderContract.anchors;
-          if (arr.length >= 2) {
-            const sorted = [...arr].sort((a, b) => isTop ? b.price - a.price : a.price - b.price);
-            const peaks = sorted.slice(0, 2).sort((a, b) => a.time - b.time);
-            p1 = peaks[0];
-            p2 = peaks[1];
+          const sorted = [...arr].sort((a, b) => isTop ? b.price - a.price : a.price - b.price);
+          const peaks = sorted.slice(0, 2).sort((a, b) => a.time - b.time);
+          p1 = peaks[0];
+          p2 = peaks[1] || null;
+          
+          // Valley — самая низкая точка между пиками (или создаём)
+          const valleyPoints = arr.filter(a => a.time > p1.time && (!p2 || a.time < p2.time));
+          if (valleyPoints.length > 0) {
+            valley = valleyPoints.reduce((min, p) => 
+              isTop ? (p.price < min.price ? p : min) : (p.price > min.price ? p : min), 
+              valleyPoints[0]
+            );
           }
         }
         
-        if (!p1 || !p2) return [];
+        if (!p1) return [];
         
-        // Normalize peaks to same level
-        const avgPeakPrice = (p1.price + p2.price) / 2;
-        
-        // Neckline
-        const necklinePrice = valley?.price || meta.neckline || 
-          (isTop ? avgPeakPrice * 0.95 : avgPeakPrice * 1.05);
-        
-        // Valley
+        // Если нет valley — создаём
         if (!valley) {
+          const necklinePrice = meta.neckline || (isTop ? p1.price * 0.95 : p1.price * 1.05);
           valley = {
-            time: (p1.time + p2.time) / 2,
+            time: p2 ? (p1.time + p2.time) / 2 : p1.time + 50,
             price: necklinePrice
           };
         }
         
-        // Target calculation (measured move)
-        const height = Math.abs(avgPeakPrice - necklinePrice);
-        const targetPrice = isTop 
-          ? necklinePrice - height
-          : necklinePrice + height;
+        // Если нет P2 — проецируем симметрично
+        if (!p2) {
+          const timeDiff = valley.time - p1.time;
+          p2 = {
+            time: valley.time + timeDiff,
+            price: p1.price
+          };
+          p2IsProjected = true;
+        }
         
-        // Calculate % move
-        const percentMove = ((targetPrice - necklinePrice) / necklinePrice * 100).toFixed(1);
+        // Нормализуем P1 и P2 на один уровень
+        const peakPrice = (p1.price + p2.price) / 2;
+        const necklinePrice = valley.price;
         
-        // Convert to screen coordinates
+        // Target (measured move)
+        const height = Math.abs(peakPrice - necklinePrice);
+        const targetPrice = isTop ? necklinePrice - height : necklinePrice + height;
+        
+        // Конвертируем в координаты
         const x1 = toX(p1.time);
-        const y1 = toY(avgPeakPrice);
+        const y1 = toY(peakPrice);
         const xV = toX(valley.time);
-        const yV = toY(valley.price);
+        const yV = toY(necklinePrice);
         const x2 = toX(p2.time);
-        const y2 = toY(avgPeakPrice);
-        const yNeck = toY(necklinePrice);
+        const y2 = toY(peakPrice);
         const yTarget = toY(targetPrice);
         
-        if ([x1, y1, xV, yV, x2, y2, yNeck].some(v => v === null || v === undefined)) {
+        if ([x1, y1, xV, yV, x2, y2].some(v => v === null || v === undefined)) {
           return [];
         }
         
         const elements = [];
-        const bearishColor = '#ef4444';
-        const bullishColor = '#22c55e';
-        const necklineColor = '#00bfff';
-        const mainColor = isTop ? bearishColor : bullishColor;
+        const mainColor = isTop ? '#ef4444' : '#22c55e';
+        const projectedColor = '#888'; // Серый для проекции
         
         // ═══════════════════════════════════════════════════════════
-        // 1. M-SHAPE (P1 → Valley → P2)
-        // ═══════════════════════════════════════════════════════════
-        elements.push(
-          <polyline
-            key="mshape"
-            points={`${x1},${y1} ${xV},${yV} ${x2},${y2}`}
-            fill="none"
-            stroke={mainColor}
-            strokeWidth={2.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        );
-        
-        // ═══════════════════════════════════════════════════════════
-        // 2. NECKLINE (до края графика)
+        // 1. ЛЕВАЯ СТОРОНА M (P1 → V) — реальная
         // ═══════════════════════════════════════════════════════════
         elements.push(
           <line
-            key="neckline"
-            x1={Math.min(x1, xV) - 20}
-            y1={yNeck}
-            x2={chartWidth}
-            y2={yNeck}
-            stroke={necklineColor}
-            strokeWidth={1.5}
-            strokeDasharray="6 3"
+            key="left-side"
+            x1={x1}
+            y1={y1}
+            x2={xV}
+            y2={yV}
+            stroke={mainColor}
+            strokeWidth={2.5}
+            strokeLinecap="round"
           />
         );
         
         // ═══════════════════════════════════════════════════════════
-        // 3. TARGET LINE (до края графика + цена + %)
+        // 2. ПРАВАЯ СТОРОНА M (V → P2) — реальная или проекция
+        // ═══════════════════════════════════════════════════════════
+        elements.push(
+          <line
+            key="right-side"
+            x1={xV}
+            y1={yV}
+            x2={x2}
+            y2={y2}
+            stroke={p2IsProjected ? projectedColor : mainColor}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeDasharray={p2IsProjected ? "6 4" : "none"}
+          />
+        );
+        
+        // ═══════════════════════════════════════════════════════════
+        // 3. ГОРИЗОНТАЛЬ (P1 — P2) — уровень вершин
+        // ═══════════════════════════════════════════════════════════
+        elements.push(
+          <line
+            key="top-level"
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            stroke={mainColor}
+            strokeWidth={1}
+            strokeDasharray="4 2"
+            opacity={0.5}
+          />
+        );
+        
+        // ═══════════════════════════════════════════════════════════
+        // 4. ЛИНИЯ ОТ P2 К NECKLINE (завершение фигуры)
+        // ═══════════════════════════════════════════════════════════
+        elements.push(
+          <line
+            key="completion-line"
+            x1={x2}
+            y1={y2}
+            x2={x2}
+            y2={yV}
+            stroke={projectedColor}
+            strokeWidth={1.5}
+            strokeDasharray="4 4"
+          />
+        );
+        
+        // ═══════════════════════════════════════════════════════════
+        // 5. СТРЕЛКА PREDICTION (от neckline к target)
+        // Косая вправо-вниз
         // ═══════════════════════════════════════════════════════════
         if (yTarget !== null) {
-          // Target line extending to chart edge
-          elements.push(
-            <line
-              key="target-line"
-              x1={x2}
-              y1={yTarget}
-              x2={chartWidth}
-              y2={yTarget}
-              stroke={mainColor}
-              strokeWidth={1.5}
-              strokeDasharray="4 2"
-            />
-          );
-          
-          // Target label at right edge
-          elements.push(
-            <text
-              key="target-label"
-              x={chartWidth - 5}
-              y={yTarget - 5}
-              fill={mainColor}
-              fontSize="11"
-              fontWeight="bold"
-              textAnchor="end"
-            >
-              {targetPrice.toFixed(0)} ({percentMove}%)
-            </text>
-          );
-          
-          // ═══════════════════════════════════════════════════════════
-          // 4. КОСАЯ СТРЕЛКА (вправо-вниз или вправо-вверх)
-          // ═══════════════════════════════════════════════════════════
-          const arrowStartX = x2 + 15;
-          const arrowStartY = yNeck;
-          const arrowEndX = x2 + 60;
+          const arrowStartX = x2 + 5;
+          const arrowStartY = yV;
+          const arrowEndX = x2 + 50;
           const arrowEndY = yTarget;
           
-          // Arrow line
+          // Линия стрелки
           elements.push(
             <line
-              key="arrow-line"
+              key="prediction-line"
               x1={arrowStartX}
               y1={arrowStartY}
               x2={arrowEndX}
@@ -204,9 +229,9 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
             />
           );
           
-          // Arrow head (small triangle)
+          // Наконечник стрелки
           const angle = Math.atan2(arrowEndY - arrowStartY, arrowEndX - arrowStartX);
-          const headLen = 8;
+          const headLen = 10;
           const head1X = arrowEndX - headLen * Math.cos(angle - Math.PI / 6);
           const head1Y = arrowEndY - headLen * Math.sin(angle - Math.PI / 6);
           const head2X = arrowEndX - headLen * Math.cos(angle + Math.PI / 6);
@@ -219,34 +244,70 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
               fill={mainColor}
             />
           );
+          
+          // Target цена (без лишнего)
+          elements.push(
+            <text
+              key="target-price"
+              x={arrowEndX + 5}
+              y={arrowEndY + 4}
+              fill={mainColor}
+              fontSize="11"
+              fontWeight="bold"
+            >
+              {targetPrice.toFixed(0)}
+            </text>
+          );
         }
         
         // ═══════════════════════════════════════════════════════════
-        // 5. MARKERS (P1, V, P2) — маленькие
+        // 6. МАРКЕРЫ P1, V, P2
         // ═══════════════════════════════════════════════════════════
+        // P1 (реальный)
         elements.push(
-          <circle key="p1-marker" cx={x1} cy={y1} r={4} fill={mainColor} stroke="#fff" strokeWidth={1.5} />
+          <circle key="p1" cx={x1} cy={y1} r={5} fill={mainColor} stroke="#fff" strokeWidth={2} />
         );
         elements.push(
-          <circle key="p2-marker" cx={x2} cy={y2} r={4} fill={mainColor} stroke="#fff" strokeWidth={1.5} />
-        );
-        elements.push(
-          <circle key="valley-marker" cx={xV} cy={yV} r={3} fill={necklineColor} stroke="#fff" strokeWidth={1} />
+          <text key="p1-label" x={x1} y={y1 - 12} fill={mainColor} fontSize="11" fontWeight="bold" textAnchor="middle">P1</text>
         );
         
-        // Labels (compact)
+        // V (реальный или вычисленный)
         elements.push(
-          <text key="p1-label" x={x1} y={y1 - 10} fill={mainColor} fontSize="10" fontWeight="bold" textAnchor="middle">P1</text>
+          <circle key="valley" cx={xV} cy={yV} r={4} fill={mainColor} stroke="#fff" strokeWidth={1.5} opacity={0.8} />
+        );
+        
+        // P2 (реальный или проекция)
+        elements.push(
+          <circle 
+            key="p2" 
+            cx={x2} 
+            cy={y2} 
+            r={5} 
+            fill={p2IsProjected ? "none" : mainColor} 
+            stroke={p2IsProjected ? projectedColor : "#fff"} 
+            strokeWidth={2}
+            strokeDasharray={p2IsProjected ? "3 2" : "none"}
+          />
         );
         elements.push(
-          <text key="p2-label" x={x2} y={y2 - 10} fill={mainColor} fontSize="10" fontWeight="bold" textAnchor="middle">P2</text>
+          <text 
+            key="p2-label" 
+            x={x2} 
+            y={y2 - 12} 
+            fill={p2IsProjected ? projectedColor : mainColor} 
+            fontSize="11" 
+            fontWeight="bold" 
+            textAnchor="middle"
+          >
+            P2{p2IsProjected ? "?" : ""}
+          </text>
         );
         
         return elements;
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // RANGE — минималистичный
+      // RANGE — просто box
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('range') || patternType.includes('channel')) {
         const bounds = renderContract.bounds || {};
@@ -268,7 +329,6 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         const elements = [];
         
-        // Box
         elements.push(
           <rect
             key="box"
@@ -276,34 +336,18 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
             y={yTop}
             width={xEnd - xStart}
             height={yBot - yTop}
-            fill="rgba(59, 130, 246, 0.08)"
+            fill="rgba(59, 130, 246, 0.1)"
             stroke="#3b82f6"
-            strokeWidth={1.5}
-            rx={2}
+            strokeWidth={2}
+            rx={3}
           />
-        );
-        
-        // Extend lines to edge
-        elements.push(
-          <line key="r-line" x1={xEnd} y1={yTop} x2={chartWidth} y2={yTop} stroke="#ef4444" strokeWidth={1} strokeDasharray="4 2" />
-        );
-        elements.push(
-          <line key="s-line" x1={xEnd} y1={yBot} x2={chartWidth} y2={yBot} stroke="#22c55e" strokeWidth={1} strokeDasharray="4 2" />
-        );
-        
-        // Price labels at edge
-        elements.push(
-          <text key="r-price" x={chartWidth - 5} y={yTop - 3} fill="#ef4444" fontSize="10" textAnchor="end">{resistance.toFixed(0)}</text>
-        );
-        elements.push(
-          <text key="s-price" x={chartWidth - 5} y={yBot + 12} fill="#22c55e" fontSize="10" textAnchor="end">{support.toFixed(0)}</text>
         );
         
         return elements;
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // TRIANGLE / WEDGE — минималистичный
+      // TRIANGLE / WEDGE — две линии
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('triangle') || patternType.includes('wedge')) {
         const boundaries = meta.boundaries || {};
@@ -329,7 +373,6 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         const elements = [];
         
-        // Lines only (no fill)
         elements.push(
           <line key="upper" x1={x1u} y1={y1u} x2={x2u} y2={y2u} stroke={color} strokeWidth={2} />
         );
@@ -354,30 +397,20 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
       return;
     }
     
-    const update = () => {
-      const elements = buildElements();
-      setSvgElements(elements);
-    };
-    
+    const update = () => setSvgElements(buildElements());
     update();
     
     const timeScale = chart.timeScale();
-    if (timeScale) {
-      timeScale.subscribeVisibleTimeRangeChange(update);
-    }
+    if (timeScale) timeScale.subscribeVisibleTimeRangeChange(update);
     chart.subscribeCrosshairMove(update);
     
     return () => {
-      if (timeScale) {
-        timeScale.unsubscribeVisibleTimeRangeChange(update);
-      }
+      if (timeScale) timeScale.unsubscribeVisibleTimeRangeChange(update);
       chart.unsubscribeCrosshairMove(update);
     };
   }, [chart, priceSeries, renderContract, buildElements]);
   
-  if (!svgElements || svgElements.length === 0) {
-    return null;
-  }
+  if (!svgElements || svgElements.length === 0) return null;
   
   return (
     <svg
