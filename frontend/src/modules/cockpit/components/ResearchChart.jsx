@@ -872,19 +872,23 @@ const ResearchChart = ({
         });
       });
 
-      // Pivot points — skip if event already placed at same time
-      (structureVisualization.pivot_points || []).forEach(pivot => {
-        if (eventTimes.has(pivot.time)) return;
-        const isHigh = pivot.kind === 'high';
-        const colorMap = { HH: COLORS.pivotHH, HL: COLORS.pivotHL, LH: COLORS.pivotLH, LL: COLORS.pivotLL };
-        markers.push({
-          time: pivot.time,
-          position: isHigh ? 'aboveBar' : 'belowBar',
-          color: colorMap[pivot.label] || COLORS.pivotDefault,
-          shape: 'circle',
-          text: pivot.label,
+      // Pivot points — skip if pattern overlay is shown (to avoid duplication)
+      // Also skip if event already placed at same time
+      const hasPatternRenderContract = !!data?.pattern_render_contract;
+      if (!hasPatternRenderContract) {
+        (structureVisualization.pivot_points || []).forEach(pivot => {
+          if (eventTimes.has(pivot.time)) return;
+          const isHigh = pivot.kind === 'high';
+          const colorMap = { HH: COLORS.pivotHH, HL: COLORS.pivotHL, LH: COLORS.pivotLH, LL: COLORS.pivotLL };
+          markers.push({
+            time: pivot.time,
+            position: isHigh ? 'aboveBar' : 'belowBar',
+            color: colorMap[pivot.label] || COLORS.pivotDefault,
+            shape: 'circle',
+            text: pivot.label,
+          });
         });
-      });
+      }
 
       // lightweight-charts requires markers sorted by time
       markers.sort((a, b) => a.time - b.time);
@@ -1187,7 +1191,9 @@ const ResearchChart = ({
     }
 
     // 5. RENDER TARGETS (secondary, thin lines)
-    if (showTargets && setup) {
+    // Skip if pattern overlay is active (to avoid duplication)
+    const hasPatternRenderContract = !!data?.pattern_render_contract;
+    if (showTargets && setup && !hasPatternRenderContract) {
       const targetLines = [];
       
       if (setup.trigger) {
