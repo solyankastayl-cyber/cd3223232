@@ -1,71 +1,92 @@
 # TA Engine PRD - Technical Analysis Module
 
 ## Original Problem Statement
-Реализовать систему отрисовки паттернов с разделением по mode/stage. Упростить рендер для loose patterns, убрать лишние слои.
+Реализовать систему отрисовки паттернов. Добавить debug для диагностики проблемы с overlay.
 
-## Architecture
-- **Backend**: FastAPI (Python) - модуль `ta_engine`
-- **Frontend**: React - модуль `cockpit` с `PatternSVGOverlay.jsx`
+## Current Status (Mar 24, 2026)
 
-## What's Been Implemented (Mar 24, 2026)
+### Backend — WORKING
+- ✅ 42/42 unit tests passed
+- ✅ health endpoint OK
+- ✅ Modules: geometry_normalizer, pattern_projection_engine, render_profile
 
-### 1. Render Profile System (`render_profile.py`) — NEW
-**Главное правило:**
-- **loose patterns** → minimal render (только body, без projection)
-- **strict forming** → compact render (body + bounds, без projection)  
-- **strict confirmed** → full render (всё включено)
+### Frontend — NEEDS TESTING ON LIVE ENV
+- ✅ PatternSVGOverlay.jsx updated with DEBUG
+- ✅ Time normalization added (ms → s)
+- ✅ Test line (red) + green border added
+- ⚠️ External preview unavailable (ingress/CDN issue)
 
-**Profiles:**
-- `compact`: M-shape + neckline only (Double Top)
-- `box`: Rectangle only (Range)
-- `clean`: Lines only (Triangle/Wedge)
-- `full`: Everything (только strict + confirmed)
+## Debug Features Added
 
-### 2. Geometry Normalization Layer
-- ✅ 12/12 unit tests passed
+### PatternSVGOverlay.jsx
+1. **Console logs on mount:**
+   - hasChart, hasSeries, hasRenderContract
+   - patternType, patternMode, renderProfile
+   - structurePoints, anchors, bounds
 
-### 3. Pattern Projection Engine
-- ✅ 16/16 unit tests passed
+2. **Coordinate conversion logs:**
+   - [toX] originalTime, normalizedTime, x
+   - [toY] price, y
+   - [toXY] NULL coords warning
 
-### 4. Render Profile Tests
-- ✅ 14/14 unit tests passed
+3. **Visual debug:**
+   - Green border (2px solid lime) on SVG
+   - Red test line from (50,50) to (200,150)
+   - "SVG OVERLAY TEST" text label
 
-### 5. Frontend PatternSVGOverlay.jsx V4
-- Читает `render_profile` от backend
-- Отключает projection для loose/forming patterns
-- Упрощённый рендер Range (box only)
-- Минимальный рендер для loose patterns
+### Time Normalization
+```javascript
+const normalizeTime = (t) => {
+  if (t > 9999999999) return Math.floor(t / 1000); // ms → s
+  return t;
+};
+```
 
-## File Structure
+## Files Modified
+
+### Backend
 ```
 /app/backend/modules/ta_engine/geometry/
-├── geometry_normalizer.py      # Normalization
-├── pattern_projection_engine.py # Projection
-├── render_profile.py           # Render profiles (NEW)
-├── pattern_geometry_builder.py
-├── wedge_shape_validator.py
-└── main_render_gate.py
+├── geometry_normalizer.py      # 12 tests
+├── pattern_projection_engine.py # 16 tests
+├── render_profile.py           # 14 tests
+└── __init__.py
 ```
 
-## Testing Status
-- ✅ 42/42 unit tests passed (normalizer + projection + render_profile)
-- ✅ Frontend compilation OK
-- ✅ Backend health OK
+### Frontend
+```
+/app/frontend/src/modules/cockpit/components/
+└── PatternSVGOverlay.jsx       # V4 + DEBUG
+```
 
-## Render Matrix
+## Next Steps to Debug Overlay
 
-| Pattern Type    | Mode   | Stage     | Structure | Fill | Bounds | Projection |
-|-----------------|--------|-----------|-----------|------|--------|------------|
-| double_top      | strict | confirmed | ✅        | ✅   | ✅     | ✅         |
-| double_top      | strict | forming   | ✅        | ✅   | ✅     | ❌         |
-| double_top      | loose  | any       | ✅        | ❌   | ✅     | ❌         |
-| range           | strict | confirmed | ✅        | ✅   | ✅     | ✅         |
-| range           | strict | forming   | ✅        | ✅   | ✅     | ❌         |
-| range           | loose  | any       | ✅        | ❌   | ✅     | ❌         |
-| triangle/wedge  | strict | confirmed | ✅        | ✅   | ✅     | ✅         |
-| triangle/wedge  | loose  | any       | ✅        | ❌   | ✅     | ❌         |
+1. **Open browser console** and look for:
+   - `[PatternSVGOverlay] MOUNTED` — component is mounting
+   - `[toX]` / `[toY]` — coordinate conversion
+   - `[PatternSVGOverlay] RENDER` — render happening
 
-## Next Tasks
-1. E2E тест с реальными данными
-2. Visual beautifier (hover, glow) для confirmed patterns
-3. Live breakout detection
+2. **Check visual indicators:**
+   - Green border around SVG area
+   - Red test line at top-left
+
+3. **If no green border:**
+   - Component not mounted
+   - Check `showPatternOverlay` prop
+   - Check `data?.pattern_render_contract`
+
+4. **If green border but no pattern:**
+   - Coords returning null
+   - Check time format (ms vs s)
+   - Check series reference
+
+## Testing Commands
+```bash
+# Backend unit tests
+cd /app/backend && python -m pytest tests/test_geometry_normalizer.py tests/test_pattern_projection.py tests/test_render_profile.py -v
+
+# Check services
+sudo supervisorctl status
+curl http://localhost:8001/api/health
+curl http://localhost:3000 | head -5
+```

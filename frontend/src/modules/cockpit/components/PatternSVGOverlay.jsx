@@ -19,23 +19,62 @@ import React, { useEffect, useState, useCallback } from 'react';
 const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
   const [svgData, setSvgData] = useState(null);
   
+  // ═══════════════════════════════════════════════════════════════
+  // DEBUG — Log component mount and props
+  // ═══════════════════════════════════════════════════════════════
+  console.log("[PatternSVGOverlay] MOUNTED", {
+    hasChart: !!chart,
+    hasSeries: !!priceSeries,
+    hasRenderContract: !!renderContract,
+    patternType: renderContract?.type,
+    patternMode: renderContract?.mode,
+    renderProfile: renderContract?.render_profile,
+    structurePoints: renderContract?.projection_contract?.structure?.points,
+    anchors: renderContract?.anchors,
+    bounds: renderContract?.bounds,
+    metaBoundaries: renderContract?.meta?.boundaries,
+  });
+  
   const calculateCoordinates = useCallback(() => {
-    if (!chart || !renderContract || !priceSeries) return null;
+    if (!chart || !renderContract || !priceSeries) {
+      console.log("[PatternSVGOverlay] calculateCoordinates SKIP - missing deps", {
+        chart: !!chart,
+        renderContract: !!renderContract,
+        priceSeries: !!priceSeries
+      });
+      return null;
+    }
     
     try {
       const timeScale = chart.timeScale();
-      if (!timeScale) return null;
+      if (!timeScale) {
+        console.log("[PatternSVGOverlay] No timeScale!");
+        return null;
+      }
       
-      // Coordinate converters
+      // ═══════════════════════════════════════════════════════════════
+      // TIME NORMALIZATION — Critical fix for milliseconds vs seconds
+      // ═══════════════════════════════════════════════════════════════
+      const normalizeTime = (t) => {
+        if (t > 9999999999) return Math.floor(t / 1000); // ms → s
+        return t;
+      };
+      
+      // Coordinate converters with DEBUG
       const toX = (time) => {
-        const t = time > 1e12 ? Math.floor(time / 1000) : time;
-        return timeScale.timeToCoordinate(t);
+        const t = normalizeTime(time);
+        const x = timeScale.timeToCoordinate(t);
+        console.log("[toX]", { originalTime: time, normalizedTime: t, x });
+        return x;
       };
       
       const toY = (price) => {
         try {
-          return priceSeries.priceToCoordinate(price);
+          const y = priceSeries.priceToCoordinate(price);
+          console.log("[toY]", { price, y });
+          return y;
         } catch (e) {
+          console.log("[toY] ERROR", e);
           return null;
         }
       };
@@ -44,7 +83,10 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         if (!p) return null;
         const x = toX(p.time);
         const y = toY(p.price);
-        if (x === null || y === null) return null;
+        if (x === null || y === null) {
+          console.log("[toXY] NULL coords for point", p, { x, y });
+          return null;
+        }
         return { x, y };
       };
       
@@ -601,10 +643,8 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
   }, [chart, priceSeries, renderContract, calculateCoordinates]);
   
   // ═══════════════════════════════════════════════════════════════
-  // RENDER
+  // RENDER — with DEBUG test line
   // ═══════════════════════════════════════════════════════════════
-  
-  if (!svgData || !svgData.elements) return null;
   
   const renderElement = (el, idx) => {
     if (!el || !el.tag) return null;
@@ -628,6 +668,15 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
     return <Tag {...props} />;
   };
   
+  // DEBUG: Always render test elements to verify SVG is mounted
+  const hasElements = svgData && svgData.elements && svgData.elements.length > 0;
+  
+  console.log("[PatternSVGOverlay] RENDER", {
+    hasElements,
+    svgDataType: svgData?.type,
+    elementCount: svgData?.elements?.length
+  });
+  
   return (
     <svg
       style={{
@@ -638,9 +687,25 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         height: '100%',
         pointerEvents: 'none',
         overflow: 'visible',
+        zIndex: 50,
+        border: '2px solid lime', // DEBUG: visible border
       }}
     >
-      {svgData.elements.map((el, idx) => renderElement(el, idx))}
+      {/* DEBUG: Always visible test line */}
+      <line 
+        x1="50" 
+        y1="50" 
+        x2="200" 
+        y2="150" 
+        stroke="red" 
+        strokeWidth="4" 
+      />
+      <text x="60" y="40" fill="red" fontSize="12" fontWeight="bold">
+        SVG OVERLAY TEST
+      </text>
+      
+      {/* Real pattern elements */}
+      {hasElements && svgData.elements.map((el, idx) => renderElement(el, idx))}
     </svg>
   );
 };
