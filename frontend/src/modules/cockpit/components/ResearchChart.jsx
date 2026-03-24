@@ -1206,19 +1206,15 @@ const ResearchChart = ({
     }
 
     // =========================================================
-    // 4.5 PATTERN GEOMETRY — DISABLED (Phase 1: Stop the bleeding)
+    // 4.5 PATTERN RENDER CONTRACT — Full Pattern Visualization
     // =========================================================
-    // Lines are DISABLED — only marker + PatternHintCard
-    // Pattern visualization will be via:
-    // 1. Single marker at pattern location
-    // 2. PatternHintCard component (outside chart)
+    // ENABLED: Render pattern lines from pattern_render_contract
     
     const renderContract = data?.pattern_render_contract;
     
     if (renderContract && showPatternOverlay) {
-      // PHASE 1: Only add MARKER, no polygon/lines
       try {
-        console.log('[ResearchChart] Pattern detected:', renderContract.type, '(lines DISABLED, marker only)');
+        console.log('[ResearchChart] Pattern rendering:', renderContract.type, renderContract.mode);
         
         // Clear any previous pattern renders
         if (window._patternRenderObjects) {
@@ -1226,43 +1222,248 @@ const ResearchChart = ({
           window._patternRenderObjects = null;
         }
         
-        // ADD SINGLE MARKER at pattern center
-        const boundaries = renderContract.boundaries || renderContract.render?.boundaries || [];
-        const window_range = renderContract.window;
+        const patternType = renderContract.type;
+        const anchors = renderContract.anchors || [];
+        const boundaries = renderContract.meta?.boundaries || {};
+        const renderProfile = renderContract.render_profile || {};
+        const isLoose = renderContract.mode === 'loose';
         
-        if (boundaries.length > 0 && window_range) {
-          // Calculate marker position (center of pattern window)
-          const markerTime = Math.floor((window_range.start + window_range.end) / 2);
-          const upperBound = boundaries.find(b => b.id?.includes('upper'));
-          const lowerBound = boundaries.find(b => b.id?.includes('lower'));
+        // Color based on bias
+        const patternColor = renderContract.bias === 'bullish' ? '#22c55e' : 
+                            renderContract.bias === 'bearish' ? '#ef4444' : 
+                            '#3b82f6';
+        
+        const lineStyle = isLoose ? 2 : 0; // 2 = dashed, 0 = solid
+        const lineWidth = renderProfile.lineWidth || (isLoose ? 1.5 : 2.5);
+        
+        // Helper to parse time
+        const parseTime = (t) => t > 1e12 ? Math.floor(t / 1000) : t;
+        
+        // ═══════════════════════════════════════════════════════════════
+        // RENDER BASED ON PATTERN TYPE
+        // ═══════════════════════════════════════════════════════════════
+        
+        if (patternType === 'double_top' || patternType === 'double_bottom') {
+          // DOUBLE TOP / DOUBLE BOTTOM — 2 peaks + neckline
+          const neckline = boundaries.neckline || renderContract.meta?.neckline;
+          const resistance = boundaries.resistance;
           
-          if (upperBound && lowerBound) {
-            const avgPrice = (upperBound.y1 + upperBound.y2 + lowerBound.y1 + lowerBound.y2) / 4;
+          console.log('[ResearchChart] DT anchors:', anchors);
+          console.log('[ResearchChart] DT neckline:', neckline);
+          
+          if (anchors.length >= 2 && neckline) {
+            // For double_top: Get the two highest price points (peaks)
+            // For double_bottom: Get the two lowest price points (valleys)
+            const sortedByPrice = [...anchors].sort((a, b) => 
+              patternType === 'double_top' ? b.price - a.price : a.price - b.price
+            );
             
-            // Add marker to price series
-            const patternMarker = {
-              time: markerTime,
-              position: 'inBar',
-              color: renderContract.type?.includes('bearish') || renderContract.type?.includes('rising') 
-                ? '#EF4444' 
-                : '#05A584',
-              shape: 'circle',
-              text: renderContract.type?.replace(/_/g, ' ')?.split(' ').map(w => w[0]).join('').toUpperCase() || 'P',
-            };
+            // Take top 2 (or bottom 2 for double_bottom)
+            const peaks = sortedByPrice.slice(0, 2);
             
+            console.log('[ResearchChart] DT peaks:', peaks);
+            
+            // USE PRICE LINES instead of separate series (more stable)
+            // Resistance line (connecting peaks)
+            priceSeries.createPriceLine({
+              price: peaks[0].price,
+              color: patternColor,
+              lineWidth: lineWidth,
+              lineStyle: isLoose ? 2 : 0,
+              axisLabelVisible: false,
+              title: 'Peak 1',
+            });
+            
+            priceSeries.createPriceLine({
+              price: peaks[1].price,
+              color: patternColor,
+              lineWidth: lineWidth,
+              lineStyle: isLoose ? 2 : 0,
+              axisLabelVisible: false,
+              title: 'Peak 2',
+            });
+            
+            // Neckline
+            priceSeries.createPriceLine({
+              price: neckline,
+              color: '#00e5ff',
+              lineWidth: 2,
+              lineStyle: 2, // Dashed
+              axisLabelVisible: true,
+              title: 'Neckline',
+            });
+            
+            console.log('[ResearchChart] DT price lines RENDERED');
+          }
+          
+        } else if (patternType.includes('wedge') || patternType.includes('triangle') || patternType.includes('range') || patternType.includes('channel')) {
+          // WEDGE / TRIANGLE / RANGE / CHANNEL — Upper + Lower boundaries
+          const upper = boundaries.upper;
+          const lower = boundaries.lower;
+          
+          if (upper && lower) {
+            console.log('[ResearchChart] Range/Wedge upper:', upper, 'lower:', lower);
+            
+            // For RANGE: Use horizontal price lines (more stable)
+            if (patternType.includes('range')) {
+              // Upper boundary (resistance)
+              const upperPrice = Math.max(upper.y1, upper.y2);
+              priceSeries.createPriceLine({
+                price: upperPrice,
+                color: patternColor,
+                lineWidth: lineWidth,
+                lineStyle: isLoose ? 2 : 0,
+                axisLabelVisible: true,
+                title: 'Resistance',
+              });
+              
+              // Lower boundary (support)
+              const lowerPrice = Math.min(lower.y1, lower.y2);
+              priceSeries.createPriceLine({
+                price: lowerPrice,
+                color: patternColor,
+                lineWidth: lineWidth,
+                lineStyle: isLoose ? 2 : 0,
+                axisLabelVisible: true,
+                title: 'Support',
+              });
+              
+              console.log('[ResearchChart] Range price lines rendered:', upperPrice, lowerPrice);
+            } else {
+              // For WEDGE/TRIANGLE: Use diagonal LineSeries
+              const upperSeries = chart.addSeries(LineSeries, {
+                color: patternColor,
+                lineWidth: lineWidth,
+                lineStyle: lineStyle,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+              });
+              
+              upperSeries.setData([
+                { time: parseTime(upper.x1), value: upper.y1 },
+                { time: parseTime(upper.x2), value: upper.y2 },
+              ].sort((a, b) => a.time - b.time));
+              
+              const lowerSeries = chart.addSeries(LineSeries, {
+                color: patternColor,
+                lineWidth: lineWidth,
+                lineStyle: lineStyle,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+              });
+              
+              lowerSeries.setData([
+                { time: parseTime(lower.x1), value: lower.y1 },
+                { time: parseTime(lower.x2), value: lower.y2 },
+              ].sort((a, b) => a.time - b.time));
+              
+              console.log('[ResearchChart] Wedge/Triangle lines rendered:', patternType);
+            }
+          } else if (anchors.length >= 4) {
+            // Fallback: render from anchors if no boundaries
+            const sorted = [...anchors].sort((a, b) => a.price - b.price);
+            const topAnchors = sorted.slice(-2).sort((a, b) => parseTime(a.time) - parseTime(b.time));
+            const bottomAnchors = sorted.slice(0, 2).sort((a, b) => parseTime(a.time) - parseTime(b.time));
+            
+            // Upper line
+            const upperSeries = chart.addSeries(LineSeries, {
+              color: patternColor,
+              lineWidth: lineWidth,
+              lineStyle: lineStyle,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            
+            upperSeries.setData([
+              { time: parseTime(topAnchors[0].time), value: topAnchors[0].price },
+              { time: parseTime(topAnchors[1].time), value: topAnchors[1].price },
+            ]);
+            
+            // Lower line
+            const lowerSeries = chart.addSeries(LineSeries, {
+              color: patternColor,
+              lineWidth: lineWidth,
+              lineStyle: lineStyle,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            
+            lowerSeries.setData([
+              { time: parseTime(bottomAnchors[0].time), value: bottomAnchors[0].price },
+              { time: parseTime(bottomAnchors[1].time), value: bottomAnchors[1].price },
+            ]);
+            
+            console.log('[ResearchChart] Pattern anchors rendered:', patternType);
+          }
+          
+        } else if (patternType === 'head_shoulders' || patternType === 'inverse_head_shoulders') {
+          // HEAD & SHOULDERS — left shoulder, head, right shoulder + neckline
+          if (anchors.length >= 3) {
+            const sorted = [...anchors].sort((a, b) => parseTime(a.time) - parseTime(b.time));
+            
+            // Connect shoulders and head
+            const shouldersSeries = chart.addSeries(LineSeries, {
+              color: patternColor,
+              lineWidth: lineWidth,
+              lineStyle: lineStyle,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            
+            shouldersSeries.setData(
+              sorted.map(a => ({ time: parseTime(a.time), value: a.price }))
+            );
+            
+            // Neckline if available
+            const neckline = boundaries.neckline || renderContract.meta?.neckline;
+            if (neckline) {
+              const necklineSeries = chart.addSeries(LineSeries, {
+                color: '#00e5ff',
+                lineWidth: 2,
+                lineStyle: 2,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+              });
+              
+              necklineSeries.setData([
+                { time: parseTime(sorted[0].time), value: neckline },
+                { time: parseTime(sorted[sorted.length - 1].time), value: neckline },
+              ]);
+            }
+            
+            console.log('[ResearchChart] Head & Shoulders rendered');
+          }
+        }
+        
+        // Add pattern label marker
+        if (anchors.length > 0) {
+          const avgTime = Math.floor(anchors.reduce((s, a) => s + parseTime(a.time), 0) / anchors.length);
+          
+          const patternMarker = {
+            time: avgTime,
+            position: 'aboveBar',
+            color: patternColor,
+            shape: 'arrowDown',
+            text: patternType.replace(/_/g, ' ').split(' ').map(w => w[0]?.toUpperCase() || '').join(''),
+          };
+          
+          try {
             priceSeries.setMarkers([patternMarker]);
-            console.log('[ResearchChart] Pattern marker added:', patternMarker);
+          } catch (e) {
+            console.warn('[ResearchChart] Marker failed:', e);
           }
         }
         
       } catch (e) {
-        console.warn('[ResearchChart] Pattern marker failed:', e);
+        console.warn('[ResearchChart] Pattern render failed:', e);
       }
     }
-    
-    // LEGACY RENDERERS DISABLED (Phase 1)
-    // Old: renderPattern(), renderPatternGeometry()
-    // These caused "lines in wrong plane" issues
 
     // =========================================================
     // 5. EXECUTION OVERLAY — Entry Zone, Stop Loss, Targets
@@ -1501,9 +1702,9 @@ const ResearchChart = ({
         chartState={chartState}
       />
       {/* Pattern V2 Overlay — toggleable via showPatternOverlay */}
-      {/* Only show if pattern_render_contract exists (passed Display Gate) */}
-      {showPatternOverlay && data?.pattern_render_contract && patternV2?.primary_pattern && (
-        <PatternOverlay patternV2={patternV2} />
+      {/* FIXED: Use pattern_render_contract directly, not patternV2.primary_pattern */}
+      {showPatternOverlay && data?.pattern_render_contract && (
+        <PatternOverlay patternV2={patternV2} renderContract={data.pattern_render_contract} />
       )}
       {/* Fibonacci Overlay — toggleable via showFibonacciOverlay */}
       {showFibonacciOverlay && fibonacci?.fib_set && (
