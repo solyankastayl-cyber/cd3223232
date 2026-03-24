@@ -68,6 +68,9 @@ from modules.ta_engine.market_state import get_market_state_engine
 from modules.ta_engine.patterns.pattern_geometry_contract import normalize_pattern_geometry
 from modules.ta_engine.structure import StructureVisualizationBuilder
 
+# Final Analysis Resolver - NEVER returns empty
+from modules.ta_engine.setup.final_analysis_resolver import get_final_analysis_resolver
+
 
 # Singleton for visualization engine
 _indicator_viz_engine = None
@@ -839,6 +842,17 @@ class PerTimeframeBuilder:
             # RENDER PLAN V2 — for clean chart rendering
             "render_plan": render_plan,
             
+            # ═══════════════════════════════════════════════════════════════
+            # FINAL ANALYSIS — NEVER EMPTY
+            # ═══════════════════════════════════════════════════════════════
+            # analysis_mode: figure | structure | context
+            # ALWAYS returns meaningful analysis even if no pattern found
+            "final_analysis": self._build_final_analysis(
+                timeframe=timeframe,
+                candles=candles,
+                primary_pattern=primary_pattern.to_dict() if primary_pattern else None,
+            ),
+            
             # Meta
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -894,6 +908,54 @@ class PerTimeframeBuilder:
             filtered.append(c)
         
         return filtered
+    
+    def _build_final_analysis(
+        self,
+        timeframe: str,
+        candles: List[Dict[str, Any]],
+        primary_pattern: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Build final analysis that NEVER returns empty.
+        
+        If figure exists -> mode = "figure"
+        Else if structure meaningful -> mode = "structure"  
+        Else -> mode = "context"
+        
+        ALWAYS returns title + text in summary.
+        """
+        try:
+            resolver = get_final_analysis_resolver()
+            result = resolver.resolve(
+                timeframe=timeframe,
+                candles=candles,
+                figure_result=primary_pattern,
+            )
+            return result.to_dict()
+        except Exception as e:
+            # Fallback - STILL never empty
+            return {
+                "timeframe": timeframe,
+                "analysis_mode": "context",
+                "figure": None,
+                "structure": {
+                    "trend": "neutral",
+                    "phase": "unknown",
+                    "swing_state": "Analysis unavailable",
+                    "bias": "neutral",
+                    "is_meaningful": False,
+                },
+                "context": {
+                    "regime": "unknown",
+                    "volatility": "normal",
+                    "location": "unknown",
+                    "range_position": "middle",
+                },
+                "summary": {
+                    "title": "Analysis temporarily unavailable",
+                    "text": f"Unable to analyze {timeframe}. Error: {str(e)[:50]}",
+                },
+            }
     
     def _build_chain_map(
         self,

@@ -5,70 +5,97 @@
 
 ## What's Been Implemented (March 2026)
 
-### 1. Pattern State Engine (`pattern_state_engine.py`)
-Новый компонент для перехода от Level 1 ("рисуем линии") к Level 2 ("описываем поведение рынка"):
-- **State Machine**: forming → maturing → breakout/breakdown → invalidated
-- **Respect Score**: измерение качества реакций цены на границы паттерна
-- **Compression Score**: насколько сужается диапазон (критично для wedge)
-- **Reaction Score**: сила движения после касания линии
-- **Trading Levels**: trigger, invalidation, target
+### 1. Final Analysis Resolver (`final_analysis_resolver.py`) - КРИТИЧЕСКИЙ
+**Главный принцип: ПУСТОГО АНАЛИЗА НИКОГДА НЕ БЫВАЕТ**
 
-### 2. Strong Pivot Filter (`strong_pivot_filter.py`)
-Фильтрация "шумовых" pivot точек:
-- Фильтр по силе реакции (move > ATR * 0.5)
-- Минимальное расстояние между pivot'ами
-- Убирает случайные колебания
+Три режима:
+- `figure` - есть чистая фигура (wedge, triangle, etc.)
+- `structure` - нет фигуры, но есть HH/HL/LH/LL структура
+- `context` - нет локальной структуры, показываем macro контекст
 
-### 3. Wedge Detector V5 (улучшенный в `pattern_detectors_unified.py`)
-Ключевые улучшения по фидбеку:
-- **Compression Check**: отклоняет паттерны без сжатия (compression < 0.2)
-- **Respect Score Check**: отклоняет если цена не реагирует на линии (respect < 0.4)
-- **State Engine Integration**: формирует полное описание состояния паттерна
-- **Strong Pivot Filter**: убирает шумовые точки
-- **Trading Levels**: breakout trigger, invalidation, target price
+Всегда возвращает:
+- `analysis_mode`: figure | structure | context
+- `structure`: trend, phase, swing_state, bias
+- `context`: regime, volatility, location
+- `summary`: title + text (НИКОГДА пустые)
 
-### 4. PatternCandidate Model (обновлён)
-Добавлены новые поля:
-- `state`: forming/maturing/breakout/breakdown/invalidated
-- `state_reason`: объяснение состояния
-- `respect_score`: качество реакций
-- `compression_score`: сжатие диапазона
-- `target_level`: целевая цена
+### 2. Structure Layer
+Железобетонный fallback - работает ВСЕГДА:
+- Определяет HH/HL/LH/LL последовательность
+- Вычисляет trend (up/down/neutral)
+- Определяет phase (impulse/correction/compression)
+- Формирует bias (bullish/bearish/neutral)
+
+### 3. Context Layer  
+Для HTF (1M, 6M, 1Y) и fallback:
+- regime: macro uptrend/downtrend/range
+- volatility: low/normal/high/extreme
+- location: near support/resistance/mid-range
+
+### 4. Pattern State Engine (`pattern_state_engine.py`)
+States: `forming → maturing → breakout → breakdown → invalidated`
+Scores: respect_score, compression_score, reaction_score
+
+### 5. Strong Pivot Filter (`strong_pivot_filter.py`)
+Фильтрует шумовые pivot точки по реакции (move > ATR * 0.5)
+
+### 6. Wedge Detector V5
+- Compression Check (reject < 0.2)
+- Respect Score Check (reject < 0.4)
+- State Engine integration
+- Исправлена логика convergence
 
 ## Architecture
 ```
-/app/backend/modules/ta_engine/
-├── setup/
-│   ├── pattern_state_engine.py    # NEW: State machine
-│   ├── strong_pivot_filter.py     # NEW: Pivot filtering
-│   ├── pattern_detectors_unified.py # UPDATED: Wedge V5
-│   ├── pattern_candidate.py       # UPDATED: New fields
-│   └── ...
-├── ta_routes.py
-├── ta_setup_api.py
-└── ...
+candles
+→ pivots
+→ swings
+→ structure_layer (ALWAYS)
+→ figure_layer (pattern detection)
+→ context_layer (ALWAYS)
+→ display_gate (for figure only)
+→ resolve_analysis_mode
+→ summary_builder
+→ final_analysis
 ```
 
-## API Endpoints
-- `GET /api/ta-engine/mtf/{symbol}?timeframes=1D,4H` - Multi-timeframe analysis
-- `GET /api/health` - Health check
+## API Response
+```json
+{
+  "tf_map": {
+    "1D": {
+      "final_analysis": {
+        "analysis_mode": "structure",
+        "structure": {
+          "trend": "up",
+          "phase": "correction", 
+          "bias": "bullish",
+          "swing_state": "HH-HL sequence intact (8 HH, 9 HL)"
+        },
+        "summary": {
+          "title": "Bullish structure in correction",
+          "text": "No clean figure is active..."
+        }
+      }
+    }
+  }
+}
+```
 
 ## Current Status
 - ✅ Backend running on port 8001
 - ✅ Frontend running on port 3000
-- ✅ MongoDB connected
-- ✅ Coinbase provider initialized
-- ✅ Bootstrap complete with BTC/ETH/SOL data
+- ✅ Final Analysis Resolver integrated
+- ✅ НИКОГДА не возвращает пустой анализ
 
-## What's Working
-- Pattern detection with quality filtering
-- Structure analysis (HH/HL/LH/LL)
-- POI (Points of Interest) zones
-- Liquidity analysis
-- Fibonacci levels
+## Key Files Changed
+- `/app/backend/modules/ta_engine/setup/final_analysis_resolver.py` (NEW)
+- `/app/backend/modules/ta_engine/setup/pattern_state_engine.py` (NEW)
+- `/app/backend/modules/ta_engine/setup/strong_pivot_filter.py` (NEW)
+- `/app/backend/modules/ta_engine/setup/pattern_detectors_unified.py` (UPDATED)
+- `/app/backend/modules/ta_engine/per_tf_builder.py` (UPDATED)
 
-## Backlog / P1 Features
-1. Улучшение детекции Head & Shoulders с State Engine
-2. Добавление визуализации state на фронтенде
-3. Реализация alerting при смене state
-4. Интеграция State Engine в другие паттерны (triangles, channels)
+## Next Steps (P1)
+1. Добавить `final_analysis` на frontend для отображения
+2. Интегрировать Context Layer в HTF rendering
+3. Добавить visual markers для structure на графике

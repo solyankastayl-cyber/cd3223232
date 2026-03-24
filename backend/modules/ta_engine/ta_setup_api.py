@@ -45,6 +45,9 @@ from modules.ta_engine.setup.pattern_registry import (
 )
 import modules.ta_engine.setup.pattern_detectors_unified  # Auto-registers detectors
 
+# Final Analysis Resolver - NEVER returns empty analysis
+from modules.ta_engine.setup.final_analysis_resolver import FinalAnalysisResolver, get_final_analysis_resolver
+
 # Decision and Scenario engines
 from modules.ta_engine.decision import build_decision, get_decision_engine_v2
 from modules.ta_engine.scenario import generate_scenarios, build_confidence_explanation, get_scenario_engine_v3
@@ -1315,11 +1318,78 @@ async def get_ta_setup_v2(
         # Legacy (for comparison)
         "legacy_pattern": legacy_pattern,
         
+        # ═══════════════════════════════════════════════════════════════
+        # FINAL ANALYSIS — NEVER EMPTY (NEW!)
+        # ═══════════════════════════════════════════════════════════════
+        # analysis_mode: figure | structure | context
+        # ALWAYS returns meaningful analysis even if no pattern found
+        # - figure: if clean pattern exists
+        # - structure: HH/HL/LH/LL + trend + phase + bias
+        # - context: regime + volatility + location
+        # - summary: title + text (ALWAYS)
+        "final_analysis": _build_final_analysis(
+            timeframe=normalized_tf,
+            candles=candles,
+            primary_pattern=result.get("primary_pattern"),
+        ),
+        
         # Standard fields
         "levels": levels,
         "structure": structure,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+
+# =============================================================================
+# Final Analysis Builder (NEVER EMPTY)
+# =============================================================================
+
+def _build_final_analysis(
+    timeframe: str,
+    candles: List[Dict],
+    primary_pattern: Optional[Dict],
+) -> Dict:
+    """
+    Build final analysis that NEVER returns empty.
+    
+    If figure exists -> mode = "figure"
+    Else if structure meaningful -> mode = "structure"  
+    Else -> mode = "context"
+    
+    ALWAYS returns title + text in summary.
+    """
+    try:
+        resolver = get_final_analysis_resolver()
+        result = resolver.resolve(
+            timeframe=timeframe,
+            candles=candles,
+            figure_result=primary_pattern,
+        )
+        return result.to_dict()
+    except Exception as e:
+        # Fallback - STILL never empty
+        return {
+            "timeframe": timeframe,
+            "analysis_mode": "context",
+            "figure": None,
+            "structure": {
+                "trend": "neutral",
+                "phase": "unknown",
+                "swing_state": "Analysis unavailable",
+                "bias": "neutral",
+                "is_meaningful": False,
+            },
+            "context": {
+                "regime": "unknown",
+                "volatility": "normal",
+                "location": "unknown",
+                "range_position": "middle",
+            },
+            "summary": {
+                "title": "Analysis temporarily unavailable",
+                "text": f"Unable to analyze {timeframe}. Error: {str(e)[:50]}",
+            },
+        }
 
 
 # =============================================================================
