@@ -801,9 +801,33 @@ const ResearchView = () => {
   // Derived data - Map backend v2 format to component format
   // v2 returns: { primary_pattern, alternative_patterns, decision, scenarios, confidence_explanation, ... }
   
+  // ═══════════════════════════════════════════════════════════════
+  // PATTERN SOURCE PRIORITY (NEW GEOMETRY LAYER INTEGRATION)
+  // ═══════════════════════════════════════════════════════════════
+  // 1. final_analysis.ui.main_overlay (new geometry layer)
+  // 2. pattern_render_contract (legacy V2 pipeline)
+  // 3. primary_pattern (fallback)
+  
+  const finalAnalysis = setupData?.final_analysis;
+  const mainOverlay = finalAnalysis?.ui?.main_overlay;
+  const analysisMode = finalAnalysis?.analysis_mode;
+  
   // Get pattern based on activePatternId
-  // PRIORITY: Use pattern_render_contract (anchor-based) if available
-  const renderContract = setupData?.pattern_render_contract;
+  // PRIORITY: Use final_analysis.ui.main_overlay if figure mode
+  const renderContract = mainOverlay?.geometry ? {
+    // Convert new geometry format to legacy render contract format
+    type: mainOverlay.type,
+    render_mode: mainOverlay.render_mode,
+    geometry_contract: mainOverlay.geometry,
+    boundaries: mainOverlay.geometry?.boundaries ? [
+      { id: 'upper', ...mainOverlay.geometry.boundaries.upper },
+      { id: 'lower', ...mainOverlay.geometry.boundaries.lower },
+    ] : [],
+    window: mainOverlay.geometry?.window,
+    anchors: mainOverlay.geometry?.anchors,
+    confidence: mainOverlay.geometry?.shape_metrics?.cleanliness || 0.6,
+  } : setupData?.pattern_render_contract;
+  
   const legacyPrimaryPattern = setupData?.primary_pattern;
   
   // Build unified pattern object from render contract
@@ -1694,7 +1718,8 @@ const ResearchView = () => {
             </CollapsibleButton>
             
             {/* PATTERN VIEW MODE — Isolates pattern for readability */}
-            {showPatternOverlay && setupData?.pattern_render_contract && (
+            {/* CRITICAL: Only show if analysis_mode === "figure" */}
+            {showPatternOverlay && analysisMode === 'figure' && renderContract && (
               <button
                 data-testid="pattern-view-btn"
                 onClick={() => setPatternViewMode(!patternViewMode)}

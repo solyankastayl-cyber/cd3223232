@@ -74,6 +74,11 @@ from modules.ta_engine.setup.final_analysis_resolver import get_final_analysis_r
 # Pattern Priority System - selects ONE dominant pattern
 from modules.ta_engine.setup.pattern_priority_system import get_pattern_priority_system
 
+# Geometry Layer - builds & validates geometry
+from modules.ta_engine.geometry.pattern_geometry_builder import get_pattern_geometry_builder
+from modules.ta_engine.geometry.wedge_shape_validator import get_wedge_shape_validator
+from modules.ta_engine.geometry.main_render_gate import get_main_render_gate
+
 
 # Singleton for visualization engine
 _indicator_viz_engine = None
@@ -568,6 +573,7 @@ class PerTimeframeBuilder:
         print(f"[PerTF] Step 5c: Pattern detection (V2 ONLY)...")
         display_message = None
         candidate_pattern = None
+        geometry_contract_dict = None  # For final_analysis UI
         
         if USE_TA_PIPELINE_V2_ONLY:
             try:
@@ -580,85 +586,103 @@ class PerTimeframeBuilder:
                     pattern_render_contract["pipeline_source"] = "v2"
                     
                     # ═══════════════════════════════════════════════════════════
-                    # DOMINANCE CHECK FOR V2 PATTERNS
+                    # GEOMETRY LAYER - Full Validation Pipeline
                     # ═══════════════════════════════════════════════════════════
-                    total_range = max(c["high"] for c in candles) - min(c["low"] for c in candles)
                     
-                    # Get pattern range from boundaries
+                    # EXTRACT boundaries and debug FIRST (CRITICAL!)
                     boundaries = pattern_render_contract.get("boundaries", [])
                     debug = pattern_render_contract.get("debug", {})
+                    pattern_type = pattern_render_contract.get("type", "")
                     
-                    # Extract prices from boundaries list
-                    upper_val = 0
-                    lower_val = float('inf')
+                    print(f"[PerTF] Extracted: type={pattern_type}, boundaries={len(boundaries)}, "
+                          f"debug_keys={list(debug.keys())}")
                     
-                    if isinstance(boundaries, list):
+                    # 1. Build geometry contract
+                    geometry_builder = get_pattern_geometry_builder()
+                    geometry_contract = geometry_builder.build(
+                        pattern_type=pattern_type,
+                        boundaries=boundaries,
+                        candles=candles,
+                        debug_info=debug,
+                    )
+                    
+                    print(f"[PerTF] Geometry built: valid={geometry_contract.is_valid}, "
+                          f"compression={geometry_contract.compression_ratio:.2f}, "
+                          f"cleanliness={geometry_contract.cleanliness:.2f}")
+                    
+                    # 2. Validate shape (wedge-specific)
+                    shape_validation = None
+                    
+                    if "wedge" in pattern_type:
+                        wedge_validator = get_wedge_shape_validator()
+                        shape_validation = wedge_validator.validate(
+                            pattern_type=pattern_type,
+                            upper_slope=geometry_contract.upper_slope,
+                            lower_slope=geometry_contract.lower_slope,
+                            compression_ratio=geometry_contract.compression_ratio,
+                            touches_upper=debug.get("touch_upper", 2),
+                            touches_lower=debug.get("touch_lower", 2),
+                            cleanliness=geometry_contract.cleanliness,
+                            apex_distance_bars=0,
+                            window_bars=debug.get("window_bars", 20),
+                        )
+                        print(f"[PerTF] Wedge shape validation: valid={shape_validation.is_valid}, "
+                              f"reason={shape_validation.reason}")
+                    
+                    # 3. Calculate coverage for render gate
+                    total_range = max(c["high"] for c in candles) - min(c["low"] for c in candles)
+                    
+                    upper_val = geometry_contract.upper_boundary.get("y1", 0)
+                    lower_val = geometry_contract.lower_boundary.get("y1", 0)
+                    if upper_val == 0:
+                        # Fallback to extracting from boundaries list
                         for b in boundaries:
                             if isinstance(b, dict):
-                                b_id = b.get("id", "")
-                                y1 = b.get("y1", 0)
-                                y2 = b.get("y2", 0)
-                                
-                                if "upper" in b_id:
-                                    upper_val = max(upper_val, y1, y2)
-                                elif "lower" in b_id:
-                                    lower_val = min(lower_val, y1, y2)
+                                if "upper" in b.get("id", ""):
+                                    upper_val = max(b.get("y1", 0), b.get("y2", 0))
+                                elif "lower" in b.get("id", ""):
+                                    lower_val = min(b.get("y1", 0), b.get("y2", 0))
                     
-                    # Reset lower_val if not found
-                    if lower_val == float('inf'):
-                        lower_val = 0
-                    
+                    pattern_range = abs(upper_val - lower_val) if upper_val and lower_val else 0
+                    coverage_ratio = pattern_range / total_range if total_range > 0 else 0
                     window_bars = debug.get("window_bars", 20)
                     
-                    print(f"[PerTF] V2 dominance check: total_range={total_range:.0f}, upper={upper_val:.0f}, lower={lower_val:.0f}")
+                    # 4. Main Render Gate
+                    render_gate = get_main_render_gate()
+                    gate_result = render_gate.check(
+                        timeframe=timeframe,
+                        geometry_contract=geometry_contract.to_dict() if geometry_contract else None,
+                        shape_validation=shape_validation.to_dict() if shape_validation else {"is_valid": True},
+                        coverage_ratio=coverage_ratio,
+                        window_bars=window_bars,
+                        touches_upper=debug.get("touch_upper", 2),
+                        touches_lower=debug.get("touch_lower", 2),
+                        cleanliness=geometry_contract.cleanliness if geometry_contract else 0.5,
+                    )
                     
-                    if upper_val > 0 and lower_val > 0 and total_range > 0:
-                        pattern_range = abs(upper_val - lower_val)
-                        coverage = pattern_range / total_range
-                        time_coverage = window_bars / len(candles) if candles else 0
-                        
-                        print(f"[PerTF] V2 coverage: pattern_range={pattern_range:.0f}, coverage={coverage:.1%}, time={time_coverage:.1%}")
-                        
-                        # DOMINANCE THRESHOLDS:
-                        # - coverage >= 15% of price range
-                        # - time >= 12% of bars (15+ bars on 150 candle chart)
-                        # - window >= 15 bars minimum
-                        MIN_COVERAGE = 0.15
-                        MIN_TIME = 0.12
-                        MIN_BARS = 15
-                        
-                        if coverage < MIN_COVERAGE:
-                            print(f"[PerTF] ❌ V2 pattern rejected: coverage {coverage:.1%} < {MIN_COVERAGE:.0%}")
-                            pattern_render_contract = None
-                            display_message = "Pattern too small to be significant."
-                        elif time_coverage < MIN_TIME:
-                            print(f"[PerTF] ❌ V2 pattern rejected: time coverage {time_coverage:.1%} < {MIN_TIME:.0%}")
-                            pattern_render_contract = None
-                            display_message = "Pattern window too short."
-                        elif window_bars < MIN_BARS:
-                            print(f"[PerTF] ❌ V2 pattern rejected: only {window_bars} bars < {MIN_BARS}")
-                            pattern_render_contract = None
-                            display_message = "Pattern window too short."
-                        else:
-                            print(f"[PerTF] ✅ V2 pattern passes dominance: coverage={coverage:.1%}, time={time_coverage:.1%}")
+                    print(f"[PerTF] Render Gate: should_render={gate_result.should_render}, "
+                          f"coverage={gate_result.coverage_ratio:.1%}, "
+                          f"required={gate_result.required_coverage:.0%}")
+                    
+                    if not gate_result.should_render:
+                        print(f"[PerTF] ❌ Pattern REJECTED by Render Gate: {gate_result.reason}")
+                        pattern_render_contract = None
+                        display_message = gate_result.reason or "Pattern does not meet display criteria."
                     else:
-                        print(f"[PerTF] ⚠️ Cannot extract boundaries, checking window_bars={window_bars}")
-                        if window_bars < 15:
-                            print(f"[PerTF] ❌ V2 pattern rejected: only {window_bars} bars")
-                            pattern_render_contract = None
-                            display_message = "Pattern window too short."
-                    
-                    if pattern_render_contract:
-                        # Log debug info
-                        debug = pattern_render_contract.get("debug", {})
+                        print(f"[PerTF] ✅ Pattern PASSED Render Gate")
+                        # Add geometry to contract
+                        geometry_contract_dict = geometry_contract.to_dict()  # SAVE for final_analysis
+                        pattern_render_contract["geometry_contract"] = geometry_contract_dict
+                        pattern_render_contract["shape_validation"] = shape_validation.to_dict() if shape_validation else None
+                        pattern_render_contract["render_gate"] = gate_result.to_dict()
+                        
+                        # Log
                         print(f"[PerTF] V2 RESULT: {{"
                               f"tf: '{timeframe}', "
-                              f"pipeline: 'v2', "
-                              f"selected_pattern: '{pattern_render_contract.get('type')}', "
-                              f"score: {pattern_render_contract.get('combined_score', 0):.2f}, "
-                              f"touches_upper: {debug.get('touch_upper', 'N/A')}, "
-                              f"touches_lower: {debug.get('touch_lower', 'N/A')}, "
-                              f"window_bars: {debug.get('window_bars', 'N/A')}"
+                              f"type: '{pattern_type}', "
+                              f"coverage: {coverage_ratio:.1%}, "
+                              f"window: {window_bars}, "
+                              f"cleanliness: {geometry_contract.cleanliness:.2f}"
                               f"}}")
                 else:
                     print(f"[PerTF] V2: No pattern found for {timeframe}")
@@ -964,6 +988,7 @@ class PerTimeframeBuilder:
                     pattern_render_contract if pattern_render_contract and pattern_render_contract.get("display_approved")
                     else (primary_pattern.to_dict() if primary_pattern else None)
                 ),
+                geometry_contract=geometry_contract_dict,
             ),
             
             # Meta
@@ -1027,6 +1052,7 @@ class PerTimeframeBuilder:
         timeframe: str,
         candles: List[Dict[str, Any]],
         primary_pattern: Optional[Dict[str, Any]],
+        geometry_contract: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Build final analysis that NEVER returns empty.
@@ -1036,6 +1062,7 @@ class PerTimeframeBuilder:
         Else -> mode = "context"
         
         ALWAYS returns title + text in summary.
+        NEW: Includes ui block with main_overlay and geometry for frontend.
         """
         try:
             resolver = get_final_analysis_resolver()
@@ -1044,7 +1071,30 @@ class PerTimeframeBuilder:
                 candles=candles,
                 figure_result=primary_pattern,
             )
-            return result.to_dict()
+            final = result.to_dict()
+            
+            # ═══════════════════════════════════════════════════════════
+            # ADD UI BLOCK FOR FRONTEND RENDERING
+            # ═══════════════════════════════════════════════════════════
+            if final["analysis_mode"] == "figure" and primary_pattern:
+                # Extract geometry from pattern
+                geo = geometry_contract or primary_pattern.get("geometry_contract")
+                
+                final["ui"] = {
+                    "main_overlay": {
+                        "type": primary_pattern.get("type"),
+                        "render_mode": "polygon",
+                        "geometry": geo,
+                    } if geo else None,
+                }
+            else:
+                # No figure - no overlay
+                final["ui"] = {
+                    "main_overlay": None,
+                }
+            
+            return final
+            
         except Exception as e:
             # Fallback - STILL never empty
             return {
@@ -1064,6 +1114,7 @@ class PerTimeframeBuilder:
                     "location": "unknown",
                     "range_position": "middle",
                 },
+                "ui": {"main_overlay": None},
                 "summary": {
                     "title": "Analysis temporarily unavailable",
                     "text": f"Unable to analyze {timeframe}. Error: {str(e)[:50]}",
