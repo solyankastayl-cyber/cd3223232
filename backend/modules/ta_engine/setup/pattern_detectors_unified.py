@@ -477,8 +477,10 @@ def detect_wedge_unified(
             direction = "bearish"
     
     # Falling wedge (both down, but converging) - bullish
+    # Converging = upper falls FASTER than lower (upper catches up to lower)
+    # h_norm < l_norm means upper is MORE negative (falls faster)
     elif high_slope_norm < -0.0001 and low_slope_norm < -0.0001:
-        if high_slope_norm > low_slope_norm:
+        if high_slope_norm < low_slope_norm:  # Upper falls faster = converging
             wedge_type = "falling_wedge"
             direction = "bullish"
     
