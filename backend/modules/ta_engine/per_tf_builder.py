@@ -1076,19 +1076,36 @@ class PerTimeframeBuilder:
             # ═══════════════════════════════════════════════════════════
             # ADD UI BLOCK FOR FRONTEND RENDERING
             # ═══════════════════════════════════════════════════════════
-            if final["analysis_mode"] == "figure" and primary_pattern:
-                # Extract geometry from pattern
+            # CRITICAL FIX: Extract geometry from pattern or geometry_contract
+            geo = None
+            pattern_type = None
+            
+            if primary_pattern:
+                # Try geometry_contract first, then from pattern
                 geo = geometry_contract or primary_pattern.get("geometry_contract")
+                pattern_type = primary_pattern.get("type")
                 
+                # If no geometry_contract, try to build from boundaries
+                if not geo and primary_pattern.get("boundaries"):
+                    geo = self._build_geometry_from_boundaries(primary_pattern)
+            
+            # RENDER GATE: Only show figure if geometry is valid
+            if final["analysis_mode"] == "figure" and geo and pattern_type:
                 final["ui"] = {
                     "main_overlay": {
-                        "type": primary_pattern.get("type"),
+                        "type": pattern_type,
                         "render_mode": "polygon",
                         "geometry": geo,
-                    } if geo else None,
+                    },
                 }
             else:
-                # No figure - no overlay
+                # No valid geometry - fallback to structure
+                if final["analysis_mode"] == "figure":
+                    # Downgrade to structure if no geometry
+                    final["analysis_mode"] = "structure"
+                    final["summary"]["title"] = "Structure in development"
+                    final["summary"]["text"] = "Market is forming structure. No dominant pattern geometry available."
+                
                 final["ui"] = {
                     "main_overlay": None,
                 }
@@ -1191,6 +1208,53 @@ class PerTimeframeBuilder:
             })
         
         return chain_map
+
+    def _build_geometry_from_boundaries(self, pattern: Dict) -> Optional[Dict]:
+        """
+        Build geometry dict from pattern boundaries.
+        
+        This is a fallback for when geometry_contract is not available
+        but we have valid boundaries.
+        """
+        boundaries = pattern.get("boundaries", [])
+        if not boundaries:
+            return None
+        
+        upper_b = None
+        lower_b = None
+        
+        for b in boundaries:
+            if isinstance(b, dict):
+                b_id = b.get("id", "").lower()
+                if "upper" in b_id:
+                    upper_b = b
+                elif "lower" in b_id:
+                    lower_b = b
+        
+        if not upper_b or not lower_b:
+            return None
+        
+        # Build minimal geometry
+        return {
+            "boundaries": {
+                "upper": {
+                    "x1": upper_b.get("x1", 0),
+                    "y1": upper_b.get("y1", 0),
+                    "x2": upper_b.get("x2", 0),
+                    "y2": upper_b.get("y2", 0),
+                },
+                "lower": {
+                    "x1": lower_b.get("x1", 0),
+                    "y1": lower_b.get("y1", 0),
+                    "x2": lower_b.get("x2", 0),
+                    "y2": lower_b.get("y2", 0),
+                },
+            },
+            "anchors": pattern.get("render", {}).get("anchors", []),
+            "window": pattern.get("window", {}),
+            "is_valid": True,
+        }
+
 
     # ═══════════════════════════════════════════════════════════════
     # HTF CONTEXT BUILDER — For 1M/6M/1Y timeframes

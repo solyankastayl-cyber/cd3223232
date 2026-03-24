@@ -70,23 +70,23 @@ class MainRenderGate:
     def __init__(self):
         # TF-specific thresholds
         self.coverage_thresholds = {
-            "4H": 0.15,
-            "1D": 0.20,
-            "7D": 0.25,
-            "1M": 0.30,
-            "3M": 0.35,
-            "6M": 0.40,
-            "1Y": 0.45,
+            "4H": 0.10,  # Lowered from 0.15
+            "1D": 0.10,  # Lowered from 0.20
+            "7D": 0.15,  # Lowered from 0.25
+            "1M": 0.20,  # Lowered from 0.30
+            "3M": 0.25,  # Lowered from 0.35
+            "6M": 0.30,  # Lowered from 0.40
+            "1Y": 0.35,  # Lowered from 0.45
         }
         
         self.window_thresholds = {
-            "4H": 10,
-            "1D": 15,
-            "7D": 12,
-            "1M": 8,
-            "3M": 6,
-            "6M": 5,
-            "1Y": 4,
+            "4H": 8,
+            "1D": 10,  # Lowered to accept shorter patterns
+            "7D": 10,
+            "1M": 6,
+            "3M": 5,
+            "6M": 4,
+            "1Y": 3,
         }
         
         self.min_touches = 2
