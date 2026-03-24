@@ -1206,49 +1206,63 @@ const ResearchChart = ({
     }
 
     // =========================================================
-    // 4.5 PATTERN GEOMETRY — Primary Visual Element
+    // 4.5 PATTERN GEOMETRY — DISABLED (Phase 1: Stop the bleeding)
     // =========================================================
-    // NEW: Use pattern_render_contract (v4) if available
-    // Fallback: Use old patternGeometry
+    // Lines are DISABLED — only marker + PatternHintCard
+    // Pattern visualization will be via:
+    // 1. Single marker at pattern location
+    // 2. PatternHintCard component (outside chart)
+    
     const renderContract = data?.pattern_render_contract;
-    const geometryToRender = patternGeometry || patternV2?.primary_pattern;
     
     if (renderContract && showPatternOverlay) {
-      // V4 RENDER CONTRACT — clean TA formations
+      // PHASE 1: Only add MARKER, no polygon/lines
       try {
-        console.log('[ResearchChart] Using V4 render contract:', renderContract.type, renderContract);
+        console.log('[ResearchChart] Pattern detected:', renderContract.type, '(lines DISABLED, marker only)');
         
-        // Clear previous pattern
+        // Clear any previous pattern renders
         if (window._patternRenderObjects) {
           clearPattern(chart, window._patternRenderObjects);
+          window._patternRenderObjects = null;
         }
         
-        // Render new pattern
-        window._patternRenderObjects = renderPattern(chart, priceSeries, renderContract, {
-          boundaryColor: '#3B82F6',  // Blue
-          necklineColor: '#EF4444',  // Red
-          breakoutColor: '#10B981',  // Green
-          boundaryWidth: 3,
-        });
+        // ADD SINGLE MARKER at pattern center
+        const boundaries = renderContract.boundaries || renderContract.render?.boundaries || [];
+        const window_range = renderContract.window;
         
-        console.log('[ResearchChart] V4 pattern rendered:', window._patternRenderObjects);
+        if (boundaries.length > 0 && window_range) {
+          // Calculate marker position (center of pattern window)
+          const markerTime = Math.floor((window_range.start + window_range.end) / 2);
+          const upperBound = boundaries.find(b => b.id?.includes('upper'));
+          const lowerBound = boundaries.find(b => b.id?.includes('lower'));
+          
+          if (upperBound && lowerBound) {
+            const avgPrice = (upperBound.y1 + upperBound.y2 + lowerBound.y1 + lowerBound.y2) / 4;
+            
+            // Add marker to price series
+            const patternMarker = {
+              time: markerTime,
+              position: 'inBar',
+              color: renderContract.type?.includes('bearish') || renderContract.type?.includes('rising') 
+                ? '#EF4444' 
+                : '#05A584',
+              shape: 'circle',
+              text: renderContract.type?.replace(/_/g, ' ')?.split(' ').map(w => w[0]).join('').toUpperCase() || 'P',
+            };
+            
+            priceSeries.setMarkers([patternMarker]);
+            console.log('[ResearchChart] Pattern marker added:', patternMarker);
+          }
+        }
+        
       } catch (e) {
-        console.warn('[ResearchChart] V4 pattern render failed:', e);
+        console.warn('[ResearchChart] Pattern marker failed:', e);
       }
-    } else if (geometryToRender?.geometry && showPatternOverlay) {
-      // LEGACY: Use old patternGeometry renderer
-      try {
-        console.log('[ResearchChart] Rendering pattern geometry (legacy):', geometryToRender.type);
-        const patternSeries = renderPatternGeometry(chart, geometryToRender, priceSeries, mapped);
-        console.log('[ResearchChart] Pattern geometry rendered, series count:', patternSeries?.length);
-        // Pattern series are added to chart by renderPatternGeometry
-      } catch (e) {
-        console.warn('[ResearchChart] Pattern geometry render failed:', e);
-      }
-    } else if (showPatternOverlay && patternV2?.primary_pattern) {
-      // Fallback: render legacy patternV2 format
-      console.log('[ResearchChart] No geometry contract, using legacy patternV2 render');
     }
+    
+    // LEGACY RENDERERS DISABLED (Phase 1)
+    // Old: renderPattern(), renderPatternGeometry()
+    // These caused "lines in wrong plane" issues
 
     // =========================================================
     // 5. EXECUTION OVERLAY — Entry Zone, Stop Loss, Targets

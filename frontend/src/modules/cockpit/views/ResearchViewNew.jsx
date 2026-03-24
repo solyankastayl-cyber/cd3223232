@@ -56,6 +56,7 @@ import TACompositionPanel from '../components/TACompositionPanel';
 import UnifiedSetupPanel from '../components/UnifiedSetupPanel';
 import MTFHeaderPanel from '../components/MTFHeaderPanel';
 import ExecutionPanel from '../components/ExecutionPanel';
+import PatternHintCard from '../components/PatternHintCard';
 import { 
   computeVisibility, 
   getLayerLimits, 
@@ -1959,6 +1960,16 @@ const ResearchView = () => {
           )}
           
         </ChartSection>
+        
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* PATTERN HINT CARD — Phase 1: Shows pattern info without geometry */}
+        {/* Lines are disabled on chart; pattern shown via card + marker */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <PatternHintCard
+          pattern={setupData?.pattern_render_contract}
+          analysisMode={analysisMode}
+          summary={setupData?.final_analysis?.summary}
+        />
         
         {/* ═══════════════════════════════════════════════════════════════ */}
         {/* INDICATOR CONTROL BAR — Click to toggle pane visibility */}
