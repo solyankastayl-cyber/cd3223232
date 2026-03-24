@@ -22,17 +22,46 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
   // ═══════════════════════════════════════════════════════════════
   // DEBUG — Log component mount and props
   // ═══════════════════════════════════════════════════════════════
-  console.log("[PatternSVGOverlay] MOUNTED", {
+  
+  // Get sample candle time for comparison
+  let sampleCandleTime = null;
+  try {
+    const data = priceSeries?.data?.();
+    if (data && data.length > 0) {
+      sampleCandleTime = data[0].time;
+    }
+  } catch (e) {
+    // Series may not have data() method
+  }
+  
+  // Get first pattern point time
+  const patternAnchors = renderContract?.anchors;
+  let patternTime = null;
+  if (patternAnchors) {
+    if (Array.isArray(patternAnchors) && patternAnchors.length > 0) {
+      patternTime = patternAnchors[0]?.time;
+    } else if (patternAnchors.p1) {
+      patternTime = patternAnchors.p1?.time;
+    }
+  }
+  
+  console.log("[PatternSVGOverlay] === MOUNT DEBUG ===", {
     hasChart: !!chart,
     hasSeries: !!priceSeries,
     hasRenderContract: !!renderContract,
     patternType: renderContract?.type,
     patternMode: renderContract?.mode,
-    renderProfile: renderContract?.render_profile,
-    structurePoints: renderContract?.projection_contract?.structure?.points,
-    anchors: renderContract?.anchors,
-    bounds: renderContract?.bounds,
-    metaBoundaries: renderContract?.meta?.boundaries,
+    // CRITICAL: Time format comparison
+    sampleCandleTime,
+    patternTime,
+    timeMismatch: patternTime && sampleCandleTime ? 
+      (patternTime > 9999999999 && sampleCandleTime < 9999999999 ? "PATTERN IN MS, CANDLE IN S" :
+       patternTime < 9999999999 && sampleCandleTime > 9999999999 ? "PATTERN IN S, CANDLE IN MS" : "OK") : "UNKNOWN",
+    // Points check
+    hasStructurePoints: !!renderContract?.projection_contract?.structure?.points,
+    hasAnchors: !!renderContract?.anchors,
+    anchorsSample: patternAnchors ? 
+      (Array.isArray(patternAnchors) ? patternAnchors.slice(0, 2) : {p1: patternAnchors.p1, p2: patternAnchors.p2}) : null,
   });
   
   const calculateCoordinates = useCallback(() => {
@@ -56,25 +85,34 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
       // TIME NORMALIZATION — Critical fix for milliseconds vs seconds
       // ═══════════════════════════════════════════════════════════════
       const normalizeTime = (t) => {
+        if (!t) return t;
         if (t > 9999999999) return Math.floor(t / 1000); // ms → s
         return t;
       };
       
-      // Coordinate converters with DEBUG
+      // Track first coord conversion for debug
+      let firstCoordLogged = false;
+      
+      // Coordinate converters
       const toX = (time) => {
         const t = normalizeTime(time);
         const x = timeScale.timeToCoordinate(t);
-        console.log("[toX]", { originalTime: time, normalizedTime: t, x });
+        if (!firstCoordLogged) {
+          console.log("[PatternSVGOverlay] First toX:", { originalTime: time, normalizedTime: t, x });
+        }
         return x;
       };
       
       const toY = (price) => {
         try {
           const y = priceSeries.priceToCoordinate(price);
-          console.log("[toY]", { price, y });
+          if (!firstCoordLogged) {
+            console.log("[PatternSVGOverlay] First toY:", { price, y });
+            firstCoordLogged = true;
+          }
           return y;
         } catch (e) {
-          console.log("[toY] ERROR", e);
+          console.log("[PatternSVGOverlay] toY ERROR:", e);
           return null;
         }
       };
@@ -84,7 +122,7 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         const x = toX(p.time);
         const y = toY(p.price);
         if (x === null || y === null) {
-          console.log("[toXY] NULL coords for point", p, { x, y });
+          console.log("[PatternSVGOverlay] NULL coords for point:", p, "→", { x, y });
           return null;
         }
         return { x, y };
@@ -671,10 +709,46 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
   // DEBUG: Always render test elements to verify SVG is mounted
   const hasElements = svgData && svgData.elements && svgData.elements.length > 0;
   
-  console.log("[PatternSVGOverlay] RENDER", {
+  // Try to get a real coordinate for debug test line
+  let debugTestCoord = null;
+  try {
+    if (chart && priceSeries && renderContract?.anchors) {
+      const timeScale = chart.timeScale();
+      const anchors = renderContract.anchors;
+      
+      // Get first anchor point
+      let testPoint = null;
+      if (Array.isArray(anchors) && anchors.length > 0) {
+        testPoint = anchors[0];
+      } else if (anchors.p1) {
+        testPoint = anchors.p1;
+      }
+      
+      if (testPoint && testPoint.time && testPoint.price) {
+        // Normalize time
+        let t = testPoint.time;
+        if (t > 9999999999) t = Math.floor(t / 1000);
+        
+        const x = timeScale.timeToCoordinate(t);
+        const y = priceSeries.priceToCoordinate(testPoint.price);
+        
+        if (x !== null && y !== null) {
+          debugTestCoord = { x, y, point: testPoint };
+          console.log("[PatternSVGOverlay] DEBUG TEST COORD SUCCESS:", debugTestCoord);
+        } else {
+          console.log("[PatternSVGOverlay] DEBUG TEST COORD FAILED - null coords:", { x, y, testPoint, normalizedTime: t });
+        }
+      }
+    }
+  } catch (e) {
+    console.log("[PatternSVGOverlay] DEBUG TEST COORD ERROR:", e);
+  }
+  
+  console.log("[PatternSVGOverlay] RENDER:", {
     hasElements,
     svgDataType: svgData?.type,
-    elementCount: svgData?.elements?.length
+    elementCount: svgData?.elements?.length,
+    debugTestCoord: debugTestCoord ? `(${debugTestCoord.x?.toFixed(0)}, ${debugTestCoord.y?.toFixed(0)})` : "NONE"
   });
   
   return (
@@ -691,7 +765,7 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         border: '2px solid lime', // DEBUG: visible border
       }}
     >
-      {/* DEBUG: Always visible test line */}
+      {/* DEBUG: Static test line (always at 50,50) */}
       <line 
         x1="50" 
         y1="50" 
@@ -700,6 +774,34 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         stroke="red" 
         strokeWidth="4" 
       />
+      <text x="60" y="40" fill="red" fontSize="12" fontWeight="bold">
+        STATIC TEST
+      </text>
+      
+      {/* DEBUG: Dynamic test circle at first anchor coords (should follow chart) */}
+      {debugTestCoord && (
+        <>
+          <circle 
+            cx={debugTestCoord.x} 
+            cy={debugTestCoord.y} 
+            r="15" 
+            fill="yellow" 
+            stroke="black" 
+            strokeWidth="3"
+          />
+          <text 
+            x={debugTestCoord.x + 20} 
+            y={debugTestCoord.y} 
+            fill="yellow" 
+            fontSize="12" 
+            fontWeight="bold"
+            stroke="black"
+            strokeWidth="0.5"
+          >
+            ANCHOR P1
+          </text>
+        </>
+      )}
       <text x="60" y="40" fill="red" fontSize="12" fontWeight="bold">
         SVG OVERLAY TEST
       </text>
