@@ -1,12 +1,16 @@
 /**
- * PatternSVGOverlay.jsx — ПРАВИЛЬНЫЙ ТЕХАНАЛИЗ
+ * PatternSVGOverlay.jsx — МИНИМАЛИСТИЧНАЯ ВЕРСИЯ
  * 
- * Double Top по Bulkowski:
- * - Две вершины на ОДНОМ уровне
- * - Valley между ними
- * - Neckline = уровень valley
- * - Target = neckline - (high - neckline)
- * - Вероятность: 65-75% вниз, 25-35% вверх
+ * Double Top:
+ * - M-shape (P1 → V → P2)
+ * - Neckline
+ * - Косая стрелка к target (вправо-вниз)
+ * - Target line до края + цена + %
+ * 
+ * БЕЗ:
+ * - Probability box
+ * - Invalid line
+ * - Лишних элементов
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -39,24 +43,15 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         }
       };
       
+      // Get chart width for extending lines to edge
+      const chartWidth = chart.timeScale().width() || 800;
+      
       const patternType = renderContract.type || '';
       const anchors = renderContract.anchors || {};
       const meta = renderContract.meta || {};
       
       // ═══════════════════════════════════════════════════════════════
-      // DOUBLE TOP (правильный теханализ)
-      // 
-      // Структура:
-      //    P1          P2
-      //     ↑           ↑    ← две вершины на ОДНОМ уровне
-      //    /\    V    /\
-      //   /  \  ↓    /  \
-      //  /    \/    /    \
-      // ─────────────────── neckline (уровень V)
-      //           ↓
-      //        TARGET (neckline - height)
-      //
-      // Вероятность: 65-75% вниз, 25-35% вверх
+      // DOUBLE TOP / DOUBLE BOTTOM
       // ═══════════════════════════════════════════════════════════════
       if (patternType === 'double_top' || patternType === 'double_bottom') {
         const isTop = patternType === 'double_top';
@@ -80,17 +75,14 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         if (!p1 || !p2) return [];
         
-        // ═══════════════════════════════════════════════════════════
-        // НОРМАЛИЗАЦИЯ: P1 и P2 должны быть на ОДНОМ уровне!
-        // Это ключевое свойство Double Top
-        // ═══════════════════════════════════════════════════════════
+        // Normalize peaks to same level
         const avgPeakPrice = (p1.price + p2.price) / 2;
         
-        // Neckline = valley level
+        // Neckline
         const necklinePrice = valley?.price || meta.neckline || 
           (isTop ? avgPeakPrice * 0.95 : avgPeakPrice * 1.05);
         
-        // Create valley if not provided (между P1 и P2)
+        // Valley
         if (!valley) {
           valley = {
             time: (p1.time + p2.time) / 2,
@@ -98,33 +90,25 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
           };
         }
         
-        // ═══════════════════════════════════════════════════════════
-        // РАСЧЁТ TARGET (measured move)
-        // Target = neckline - (peak - neckline)
-        // ═══════════════════════════════════════════════════════════
+        // Target calculation (measured move)
         const height = Math.abs(avgPeakPrice - necklinePrice);
         const targetPrice = isTop 
-          ? necklinePrice - height  // Target вниз для double top
-          : necklinePrice + height; // Target вверх для double bottom
+          ? necklinePrice - height
+          : necklinePrice + height;
         
-        // Invalidation level (слом фигуры)
-        const invalidationPrice = isTop
-          ? avgPeakPrice * 1.01  // Выше пиков = слом
-          : avgPeakPrice * 0.99;
+        // Calculate % move
+        const percentMove = ((targetPrice - necklinePrice) / necklinePrice * 100).toFixed(1);
         
         // Convert to screen coordinates
-        // Используем НОРМАЛИЗОВАННЫЙ уровень для P1 и P2
         const x1 = toX(p1.time);
-        const y1 = toY(avgPeakPrice); // Нормализованный уровень!
+        const y1 = toY(avgPeakPrice);
         const xV = toX(valley.time);
         const yV = toY(valley.price);
         const x2 = toX(p2.time);
-        const y2 = toY(avgPeakPrice); // Нормализованный уровень!
+        const y2 = toY(avgPeakPrice);
         const yNeck = toY(necklinePrice);
         const yTarget = toY(targetPrice);
-        const yInvalid = toY(invalidationPrice);
         
-        // Validate coordinates
         if ([x1, y1, xV, yV, x2, y2, yNeck].some(v => v === null || v === undefined)) {
           return [];
         }
@@ -136,24 +120,7 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         const mainColor = isTop ? bearishColor : bullishColor;
         
         // ═══════════════════════════════════════════════════════════
-        // 1. RESISTANCE LINE (уровень двух вершин)
-        // ═══════════════════════════════════════════════════════════
-        elements.push(
-          <line
-            key="resistance"
-            x1={x1 - 30}
-            y1={y1}
-            x2={x2 + 30}
-            y2={y2}
-            stroke={mainColor}
-            strokeWidth={2}
-            strokeDasharray="4 2"
-            opacity={0.7}
-          />
-        );
-        
-        // ═══════════════════════════════════════════════════════════
-        // 2. M-SHAPE (P1 → Valley → P2)
+        // 1. M-SHAPE (P1 → Valley → P2)
         // ═══════════════════════════════════════════════════════════
         elements.push(
           <polyline
@@ -161,212 +128,125 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
             points={`${x1},${y1} ${xV},${yV} ${x2},${y2}`}
             fill="none"
             stroke={mainColor}
-            strokeWidth={3}
+            strokeWidth={2.5}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
         );
         
         // ═══════════════════════════════════════════════════════════
-        // 3. NECKLINE (уровень подтверждения)
+        // 2. NECKLINE (до края графика)
         // ═══════════════════════════════════════════════════════════
         elements.push(
           <line
             key="neckline"
-            x1={x1 - 50}
+            x1={Math.min(x1, xV) - 20}
             y1={yNeck}
-            x2={x2 + 80}
+            x2={chartWidth}
             y2={yNeck}
             stroke={necklineColor}
-            strokeWidth={2}
-            strokeDasharray="8 4"
+            strokeWidth={1.5}
+            strokeDasharray="6 3"
           />
         );
         
-        // Neckline label
-        elements.push(
-          <text
-            key="neckline-label"
-            x={x2 + 85}
-            y={yNeck + 4}
-            fill={necklineColor}
-            fontSize="10"
-            fontWeight="bold"
-          >
-            NECKLINE
-          </text>
-        );
-        
         // ═══════════════════════════════════════════════════════════
-        // 4. TARGET PROJECTION (measured move)
+        // 3. TARGET LINE (до края графика + цена + %)
         // ═══════════════════════════════════════════════════════════
         if (yTarget !== null) {
-          // Arrow down to target
-          const arrowX = x2 + 20;
-          
+          // Target line extending to chart edge
           elements.push(
             <line
               key="target-line"
-              x1={arrowX}
-              y1={yNeck}
-              x2={arrowX}
+              x1={x2}
+              y1={yTarget}
+              x2={chartWidth}
               y2={yTarget}
               stroke={mainColor}
-              strokeWidth={2}
-              markerEnd="url(#arrow-down)"
+              strokeWidth={1.5}
+              strokeDasharray="4 2"
             />
           );
           
-          // Target zone
-          elements.push(
-            <rect
-              key="target-zone"
-              x={x1}
-              y={yTarget - 5}
-              width={x2 - x1 + 40}
-              height={10}
-              fill={mainColor}
-              opacity={0.2}
-              rx={3}
-            />
-          );
-          
-          // Target label
+          // Target label at right edge
           elements.push(
             <text
               key="target-label"
-              x={arrowX + 10}
-              y={yTarget + 4}
+              x={chartWidth - 5}
+              y={yTarget - 5}
               fill={mainColor}
               fontSize="11"
               fontWeight="bold"
+              textAnchor="end"
             >
-              TARGET ({targetPrice.toFixed(0)})
+              {targetPrice.toFixed(0)} ({percentMove}%)
             </text>
           );
-        }
-        
-        // ═══════════════════════════════════════════════════════════
-        // 5. INVALIDATION LEVEL (слом фигуры)
-        // ═══════════════════════════════════════════════════════════
-        if (yInvalid !== null) {
+          
+          // ═══════════════════════════════════════════════════════════
+          // 4. КОСАЯ СТРЕЛКА (вправо-вниз или вправо-вверх)
+          // ═══════════════════════════════════════════════════════════
+          const arrowStartX = x2 + 15;
+          const arrowStartY = yNeck;
+          const arrowEndX = x2 + 60;
+          const arrowEndY = yTarget;
+          
+          // Arrow line
           elements.push(
             <line
-              key="invalid-line"
-              x1={x1 - 20}
-              y1={yInvalid}
-              x2={x2 + 50}
-              y2={yInvalid}
-              stroke={bullishColor}
-              strokeWidth={1.5}
-              strokeDasharray="3 3"
-              opacity={0.6}
+              key="arrow-line"
+              x1={arrowStartX}
+              y1={arrowStartY}
+              x2={arrowEndX}
+              y2={arrowEndY}
+              stroke={mainColor}
+              strokeWidth={2}
             />
           );
           
+          // Arrow head (small triangle)
+          const angle = Math.atan2(arrowEndY - arrowStartY, arrowEndX - arrowStartX);
+          const headLen = 8;
+          const head1X = arrowEndX - headLen * Math.cos(angle - Math.PI / 6);
+          const head1Y = arrowEndY - headLen * Math.sin(angle - Math.PI / 6);
+          const head2X = arrowEndX - headLen * Math.cos(angle + Math.PI / 6);
+          const head2Y = arrowEndY - headLen * Math.sin(angle + Math.PI / 6);
+          
           elements.push(
-            <text
-              key="invalid-label"
-              x={x2 + 55}
-              y={yInvalid + 4}
-              fill={bullishColor}
-              fontSize="9"
-            >
-              INVALID
-            </text>
+            <polygon
+              key="arrow-head"
+              points={`${arrowEndX},${arrowEndY} ${head1X},${head1Y} ${head2X},${head2Y}`}
+              fill={mainColor}
+            />
           );
         }
         
         // ═══════════════════════════════════════════════════════════
-        // 6. ВЕРОЯТНОСТИ (по Bulkowski)
-        // ═══════════════════════════════════════════════════════════
-        const probDown = isTop ? "70%" : "30%";
-        const probUp = isTop ? "30%" : "70%";
-        
-        // Probability box
-        const boxX = x2 + 60;
-        const boxY = (y1 + yNeck) / 2 - 25;
-        
-        elements.push(
-          <rect
-            key="prob-box"
-            x={boxX}
-            y={boxY}
-            width={70}
-            height={50}
-            fill="#1a1a2e"
-            stroke="#333"
-            strokeWidth={1}
-            rx={4}
-            opacity={0.9}
-          />
-        );
-        
-        elements.push(
-          <text key="prob-title" x={boxX + 5} y={boxY + 14} fill="#888" fontSize="9">
-            Probability
-          </text>
-        );
-        
-        elements.push(
-          <text key="prob-down" x={boxX + 5} y={boxY + 28} fill={bearishColor} fontSize="11" fontWeight="bold">
-            ↓ {probDown}
-          </text>
-        );
-        
-        elements.push(
-          <text key="prob-up" x={boxX + 5} y={boxY + 42} fill={bullishColor} fontSize="11" fontWeight="bold">
-            ↑ {probUp}
-          </text>
-        );
-        
-        // ═══════════════════════════════════════════════════════════
-        // 7. MARKERS (P1, V, P2)
+        // 5. MARKERS (P1, V, P2) — маленькие
         // ═══════════════════════════════════════════════════════════
         elements.push(
-          <circle key="p1-marker" cx={x1} cy={y1} r={6} fill={mainColor} stroke="#fff" strokeWidth={2} />
+          <circle key="p1-marker" cx={x1} cy={y1} r={4} fill={mainColor} stroke="#fff" strokeWidth={1.5} />
         );
         elements.push(
-          <circle key="p2-marker" cx={x2} cy={y2} r={6} fill={mainColor} stroke="#fff" strokeWidth={2} />
+          <circle key="p2-marker" cx={x2} cy={y2} r={4} fill={mainColor} stroke="#fff" strokeWidth={1.5} />
         );
         elements.push(
-          <circle key="valley-marker" cx={xV} cy={yV} r={5} fill={necklineColor} stroke="#fff" strokeWidth={2} />
+          <circle key="valley-marker" cx={xV} cy={yV} r={3} fill={necklineColor} stroke="#fff" strokeWidth={1} />
         );
         
-        // Labels
+        // Labels (compact)
         elements.push(
-          <text key="p1-label" x={x1} y={y1 - 14} fill={mainColor} fontSize="12" fontWeight="bold" textAnchor="middle">P1</text>
+          <text key="p1-label" x={x1} y={y1 - 10} fill={mainColor} fontSize="10" fontWeight="bold" textAnchor="middle">P1</text>
         );
         elements.push(
-          <text key="p2-label" x={x2} y={y2 - 14} fill={mainColor} fontSize="12" fontWeight="bold" textAnchor="middle">P2</text>
-        );
-        elements.push(
-          <text key="v-label" x={xV} y={yV + 20} fill={necklineColor} fontSize="11" fontWeight="bold" textAnchor="middle">V</text>
-        );
-        
-        // ═══════════════════════════════════════════════════════════
-        // 8. ARROW MARKER DEFINITION
-        // ═══════════════════════════════════════════════════════════
-        elements.unshift(
-          <defs key="defs">
-            <marker
-              id="arrow-down"
-              markerWidth="10"
-              markerHeight="10"
-              refX="5"
-              refY="5"
-              orient="auto"
-            >
-              <path d="M0,0 L10,5 L0,10 Z" fill={mainColor} />
-            </marker>
-          </defs>
+          <text key="p2-label" x={x2} y={y2 - 10} fill={mainColor} fontSize="10" fontWeight="bold" textAnchor="middle">P2</text>
         );
         
         return elements;
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // RANGE
+      // RANGE — минималистичный
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('range') || patternType.includes('channel')) {
         const bounds = renderContract.bounds || {};
@@ -386,14 +266,9 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         if ([xStart, xEnd, yTop, yBot].some(v => v === null)) return [];
         
-        // Range target calculation
-        const rangeHeight = Math.abs(resistance - support);
-        const targetUp = resistance + rangeHeight;
-        const targetDown = support - rangeHeight;
-        
         const elements = [];
         
-        // Rectangle
+        // Box
         elements.push(
           <rect
             key="box"
@@ -401,42 +276,34 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
             y={yTop}
             width={xEnd - xStart}
             height={yBot - yTop}
-            fill="rgba(59, 130, 246, 0.1)"
+            fill="rgba(59, 130, 246, 0.08)"
             stroke="#3b82f6"
-            strokeWidth={2}
-            rx={3}
+            strokeWidth={1.5}
+            rx={2}
           />
         );
         
-        // R/S labels
+        // Extend lines to edge
         elements.push(
-          <text key="r-label" x={xEnd + 8} y={yTop + 4} fill="#ef4444" fontSize="11" fontWeight="bold">R</text>
+          <line key="r-line" x1={xEnd} y1={yTop} x2={chartWidth} y2={yTop} stroke="#ef4444" strokeWidth={1} strokeDasharray="4 2" />
         );
         elements.push(
-          <text key="s-label" x={xEnd + 8} y={yBot + 4} fill="#22c55e" fontSize="11" fontWeight="bold">S</text>
+          <line key="s-line" x1={xEnd} y1={yBot} x2={chartWidth} y2={yBot} stroke="#22c55e" strokeWidth={1} strokeDasharray="4 2" />
         );
         
-        // Target projections
-        const yTargetUp = toY(targetUp);
-        const yTargetDown = toY(targetDown);
-        
-        if (yTargetUp !== null) {
-          elements.push(
-            <line key="target-up" x1={xEnd + 15} y1={yTop} x2={xEnd + 15} y2={yTargetUp} stroke="#22c55e" strokeWidth={2} strokeDasharray="4 2" />
-          );
-        }
-        
-        if (yTargetDown !== null) {
-          elements.push(
-            <line key="target-down" x1={xEnd + 25} y1={yBot} x2={xEnd + 25} y2={yTargetDown} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 2" />
-          );
-        }
+        // Price labels at edge
+        elements.push(
+          <text key="r-price" x={chartWidth - 5} y={yTop - 3} fill="#ef4444" fontSize="10" textAnchor="end">{resistance.toFixed(0)}</text>
+        );
+        elements.push(
+          <text key="s-price" x={chartWidth - 5} y={yBot + 12} fill="#22c55e" fontSize="10" textAnchor="end">{support.toFixed(0)}</text>
+        );
         
         return elements;
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // TRIANGLE / WEDGE
+      // TRIANGLE / WEDGE — минималистичный
       // ═══════════════════════════════════════════════════════════════
       if (patternType.includes('triangle') || patternType.includes('wedge')) {
         const boundaries = meta.boundaries || {};
@@ -458,26 +325,16 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
         
         const color = patternType.includes('wedge') 
           ? (patternType.includes('falling') ? '#22c55e' : '#ef4444')
-          : '#00bfff';
+          : '#3b82f6';
         
         const elements = [];
         
-        // Fill
+        // Lines only (no fill)
         elements.push(
-          <polygon
-            key="fill"
-            points={`${x1u},${y1u} ${x2u},${y2u} ${x2l},${y2l} ${x1l},${y1l}`}
-            fill={color}
-            opacity={0.1}
-          />
-        );
-        
-        // Lines
-        elements.push(
-          <line key="upper" x1={x1u} y1={y1u} x2={x2u} y2={y2u} stroke={color} strokeWidth={2.5} />
+          <line key="upper" x1={x1u} y1={y1u} x2={x2u} y2={y2u} stroke={color} strokeWidth={2} />
         );
         elements.push(
-          <line key="lower" x1={x1l} y1={y1l} x2={x2l} y2={y2l} stroke={color} strokeWidth={2.5} />
+          <line key="lower" x1={x1l} y1={y1l} x2={x2l} y2={y2l} stroke={color} strokeWidth={2} />
         );
         
         return elements;
@@ -491,7 +348,6 @@ const PatternSVGOverlay = ({ chart, priceSeries, pattern, renderContract }) => {
     }
   }, [chart, priceSeries, renderContract]);
   
-  // Update on chart changes
   useEffect(() => {
     if (!chart || !priceSeries || !renderContract) {
       setSvgElements([]);
