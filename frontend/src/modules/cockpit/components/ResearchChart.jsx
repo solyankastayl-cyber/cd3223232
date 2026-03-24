@@ -1244,46 +1244,55 @@ const ResearchChart = ({
         // ═══════════════════════════════════════════════════════════════
         
         if (patternType === 'double_top' || patternType === 'double_bottom') {
-          // DOUBLE TOP / DOUBLE BOTTOM — 2 peaks + neckline
+          // DOUBLE TOP / DOUBLE BOTTOM — Polyline: peak1 → valley → peak2
           const neckline = boundaries.neckline || renderContract.meta?.neckline;
-          const resistance = boundaries.resistance;
           
           console.log('[ResearchChart] DT anchors:', anchors);
           console.log('[ResearchChart] DT neckline:', neckline);
           
           if (anchors.length >= 2 && neckline) {
-            // For double_top: Get the two highest price points (peaks)
-            // For double_bottom: Get the two lowest price points (valleys)
+            // Sort anchors by time to get correct order
+            const sortedByTime = [...anchors].sort((a, b) => parseTime(a.time) - parseTime(b.time));
+            
+            // For double_top: peaks are higher prices, valley is between them
             const sortedByPrice = [...anchors].sort((a, b) => 
               patternType === 'double_top' ? b.price - a.price : a.price - b.price
             );
             
-            // Take top 2 (or bottom 2 for double_bottom)
-            const peaks = sortedByPrice.slice(0, 2);
+            // Get peaks (top 2 by price for double_top)
+            const peaks = sortedByPrice.slice(0, 2).sort((a, b) => parseTime(a.time) - parseTime(b.time));
+            const peak1 = peaks[0];
+            const peak2 = peaks[1];
             
-            console.log('[ResearchChart] DT peaks:', peaks);
+            // Valley is either explicit anchor or the neckline point
+            let valley = anchors.find(a => Math.abs(a.price - neckline) < 100);
+            if (!valley) {
+              valley = {
+                time: Math.floor((parseTime(peak1.time) + parseTime(peak2.time)) / 2),
+                price: neckline
+              };
+            }
             
-            // USE PRICE LINES instead of separate series (more stable)
-            // Resistance line (connecting peaks)
+            console.log('[ResearchChart] DT peak1:', peak1, 'valley:', valley, 'peak2:', peak2);
+            
+            // ═══════════════════════════════════════════════════════════════
+            // USE MARKERS FOR PATTERN VISUALIZATION (stable approach)
+            // Markers: Peak1, Valley (with lines implied by position)
+            // ═══════════════════════════════════════════════════════════════
+            
+            // Create pattern visualization with price lines
+            // Peak level (resistance)
+            const peakLevel = Math.max(peak1.price, peak2.price);
             priceSeries.createPriceLine({
-              price: peaks[0].price,
+              price: peakLevel,
               color: patternColor,
-              lineWidth: lineWidth,
-              lineStyle: isLoose ? 2 : 0,
-              axisLabelVisible: false,
-              title: 'Peak 1',
+              lineWidth: 2,
+              lineStyle: 0, // Solid
+              axisLabelVisible: true,
+              title: 'Resistance',
             });
             
-            priceSeries.createPriceLine({
-              price: peaks[1].price,
-              color: patternColor,
-              lineWidth: lineWidth,
-              lineStyle: isLoose ? 2 : 0,
-              axisLabelVisible: false,
-              title: 'Peak 2',
-            });
-            
-            // Neckline
+            // Neckline (support)
             priceSeries.createPriceLine({
               price: neckline,
               color: '#00e5ff',
@@ -1293,7 +1302,38 @@ const ResearchChart = ({
               title: 'Neckline',
             });
             
-            console.log('[ResearchChart] DT price lines RENDERED');
+            // Add markers at key points to show pattern structure
+            const patternMarkers = [
+              // Peak 1 marker
+              {
+                time: parseTime(peak1.time),
+                position: 'aboveBar',
+                color: patternColor,
+                shape: 'arrowDown',
+                text: 'P1',
+              },
+              // Peak 2 marker
+              {
+                time: parseTime(peak2.time),
+                position: 'aboveBar',
+                color: patternColor,
+                shape: 'arrowDown',
+                text: 'P2',
+              },
+              // Valley marker
+              {
+                time: parseTime(valley.time),
+                position: 'belowBar',
+                color: '#00e5ff',
+                shape: 'arrowUp',
+                text: 'V',
+              },
+            ];
+            
+            // Use createSeriesMarkers (new API)
+            createSeriesMarkers(priceSeries, patternMarkers.sort((a, b) => a.time - b.time));
+            
+            console.log('[ResearchChart] DT pattern with markers + levels RENDERED');
           }
           
         } else if (patternType.includes('wedge') || patternType.includes('triangle') || patternType.includes('range') || patternType.includes('channel')) {
