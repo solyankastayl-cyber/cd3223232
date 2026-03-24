@@ -1,5 +1,5 @@
 """
-Geometry Layer — Pattern geometry building, validation, normalization and projection.
+Geometry Layer — Pattern geometry building, validation, normalization, projection and render profiles.
 """
 
 from .pattern_geometry_builder import PatternGeometryBuilder, get_pattern_geometry_builder
@@ -18,6 +18,12 @@ from .pattern_projection_engine import (
     PatternProjectionContract,
     PatternStage,
 )
+from .render_profile import (
+    RenderProfile,
+    RenderMode,
+    get_render_profile,
+    configure_pattern_render,
+)
 
 __all__ = [
     "PatternGeometryBuilder",
@@ -33,4 +39,8 @@ __all__ = [
     "build_pattern_projection",
     "PatternProjectionContract",
     "PatternStage",
+    "RenderProfile",
+    "RenderMode",
+    "get_render_profile",
+    "configure_pattern_render",
 ]

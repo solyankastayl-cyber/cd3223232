@@ -86,6 +86,7 @@ from modules.ta_engine.geometry.wedge_shape_validator import get_wedge_shape_val
 from modules.ta_engine.geometry.main_render_gate import get_main_render_gate
 from modules.ta_engine.geometry.geometry_normalizer import get_geometry_normalizer, normalize_pattern
 from modules.ta_engine.geometry.pattern_projection_engine import get_pattern_projection_engine
+from modules.ta_engine.geometry.render_profile import configure_pattern_render, get_render_profile
 
 
 # Singleton for visualization engine
@@ -712,6 +713,14 @@ class PerTimeframeBuilder:
                                       f"target={projection.get('projection', {}).get('primary', {}).get('target')}")
                         except Exception as proj_err:
                             print(f"[PerTF] ⚠️ Projection skipped: {proj_err}")
+                        
+                        # ═══════════════════════════════════════════════════════════
+                        # RENDER PROFILE — Configure what to draw based on mode/stage
+                        # ═══════════════════════════════════════════════════════════
+                        try:
+                            pattern_render_contract = configure_pattern_render(pattern_render_contract)
+                        except Exception as rp_err:
+                            print(f"[PerTF] ⚠️ Render profile skipped: {rp_err}")
                         
                         # Log
                         print(f"[PerTF] V2 RESULT: {{"
