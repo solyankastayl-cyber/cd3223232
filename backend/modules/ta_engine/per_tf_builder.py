@@ -51,6 +51,9 @@ from modules.ta_engine.setup.pattern_registry import run_all_detectors, filter_b
 # This triggers @register_pattern decorators at import time
 from modules.ta_engine.setup import pattern_detectors_unified  # noqa: F401
 
+# PRO Pattern Engine (final layer)
+from modules.ta_engine.pro_pattern_engine import run_pro_pattern_engine, build_ui_pattern_payload
+
 from modules.ta_engine.decision import get_decision_engine_v2
 from modules.ta_engine.scenario import get_scenario_engine_v3
 from modules.ta_engine.structure import get_choch_validation_engine
@@ -815,6 +818,52 @@ class PerTimeframeBuilder:
                 print(f"[PerTF] Anchor engine error: {e}")
         
         # =============================================
+        # STEP 5e: PRO PATTERN ENGINE (FINAL LAYER)
+        # =============================================
+        # This is the ultimate pattern detection layer
+        # Combines strict + loose patterns, always has something to show
+        pro_pattern_stack = None
+        pro_pattern_payload = None
+        
+        try:
+            print(f"[PerTF] Step 5e: PRO Pattern Engine...")
+            current_price = candles[-1].get("close", 0) if candles else 0
+            
+            pro_pattern_stack = run_pro_pattern_engine(candles, current_price)
+            pro_pattern_payload = build_ui_pattern_payload(pro_pattern_stack)
+            
+            if pro_pattern_payload.get("pattern"):
+                print(f"[PerTF] ✅ PRO Engine found: {pro_pattern_payload['pattern_meta']['label']} "
+                      f"(mode={pro_pattern_payload['pattern_meta']['mode']}, "
+                      f"conf={pro_pattern_payload['pattern_meta']['confidence']:.2f}, "
+                      f"state={pro_pattern_payload['pattern_meta']['state']})")
+                
+                # If no pattern_render_contract yet, use PRO engine result
+                if pattern_render_contract is None:
+                    pattern_render_contract = pro_pattern_payload["pattern"]
+                    pattern_render_contract["source"] = "PRO_PATTERN_ENGINE"
+                    pattern_render_contract["display_approved"] = True  # Mark as approved
+                    display_message = f"{pro_pattern_payload['pattern_meta']['label']} {pro_pattern_payload['pattern_meta']['state']}"
+                    
+                    # Build geometry_contract from anchors
+                    anchors = pattern_render_contract.get("anchors", [])
+                    if len(anchors) >= 3:  # Reduced from 4 to allow triangular patterns
+                        geometry_contract_dict = {
+                            "is_valid": True,
+                            "anchors": anchors,
+                            "boundaries": pattern_render_contract.get("meta", {}).get("boundaries", {}),
+                            "mode": pattern_render_contract.get("mode", "loose"),
+                        }
+            else:
+                print(f"[PerTF] PRO Engine: No pattern (strict={pro_pattern_stack.get('strict_count', 0)}, "
+                      f"loose={pro_pattern_stack.get('loose_count', 0)})")
+                
+        except Exception as e:
+            print(f"[PerTF] PRO Engine error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # =============================================
         # STEP 6: INDICATORS & TA CONTEXT
         # =============================================
         print(f"[PerTF] Step 6: Indicators...")
@@ -1069,6 +1118,7 @@ class PerTimeframeBuilder:
             # analysis_mode: figure | structure | context
             # ALWAYS returns meaningful analysis even if no pattern found
             # Use V2 pattern_render_contract if it passed all checks, otherwise primary_pattern
+            # NEW: Pass pro_pattern_payload for loose pattern support
             "final_analysis": self._build_final_analysis(
                 timeframe=timeframe,
                 candles=candles,
@@ -1077,6 +1127,7 @@ class PerTimeframeBuilder:
                     else (primary_pattern.to_dict() if primary_pattern else None)
                 ),
                 geometry_contract=geometry_contract_dict,
+                pro_pattern_payload=pro_pattern_payload,
             ),
             
             # Meta
@@ -1141,6 +1192,7 @@ class PerTimeframeBuilder:
         candles: List[Dict[str, Any]],
         primary_pattern: Optional[Dict[str, Any]],
         geometry_contract: Optional[Dict[str, Any]] = None,
+        pro_pattern_payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Build final analysis that NEVER returns empty.
@@ -1151,6 +1203,7 @@ class PerTimeframeBuilder:
         
         ALWAYS returns title + text in summary.
         NEW: Includes ui block with main_overlay and geometry for frontend.
+        NEW: Uses PRO pattern engine for loose patterns (always shows something)
         """
         try:
             resolver = get_final_analysis_resolver()
@@ -1162,47 +1215,93 @@ class PerTimeframeBuilder:
             final = result.to_dict()
             
             # ═══════════════════════════════════════════════════════════
-            # STRICT UI BLOCK — NO FALLBACKS, NO FAKE GEOMETRY
+            # UI BLOCK WITH PRO ENGINE SUPPORT
             # ═══════════════════════════════════════════════════════════
-            # Rule: Main overlay ONLY from anchor-based geometry_contract
-            # NO fallbacks, NO boundary reconstruction
+            # Priority:
+            # 1. STRICT pattern with valid geometry → solid render
+            # 2. LOOSE pattern from PRO engine → dashed render
+            # 3. Structure fallback → no overlay
             
             geo = None
             pattern_type = None
             geo_source = None
-            shape_valid = False
+            pattern_mode = None
+            render_profile = None
             
-            # ONLY use geometry_contract built from anchors
-            if geometry_contract:
+            # Try STRICT geometry first
+            if geometry_contract and geometry_contract.get("is_valid"):
                 geo = geometry_contract
                 geo_source = "anchor_geometry"
-                shape_valid = geometry_contract.get("is_valid", False)
                 pattern_type = primary_pattern.get("type") if primary_pattern else None
+                pattern_mode = "strict"
+                render_profile = {
+                    "opacity": 0.22,
+                    "lineWidth": 2.5,
+                    "dash": False,
+                    "fill": True,
+                }
             
-            # STRICT RENDER CHECK:
-            # 1. analysis_mode must be "figure"
-            # 2. geometry must exist
-            # 3. geometry must be from anchor_geometry (not fallback)
-            # 4. shape must be valid
+            # Try PRO engine LOOSE pattern if no strict
+            elif pro_pattern_payload and pro_pattern_payload.get("pattern"):
+                pro_pattern = pro_pattern_payload["pattern"]
+                pattern_type = pro_pattern.get("type")
+                pattern_mode = pro_pattern.get("mode", "loose")
+                render_profile = pro_pattern.get("render_profile", {
+                    "opacity": 0.10,
+                    "lineWidth": 1.5,
+                    "dash": True,
+                    "fill": True,
+                })
+                
+                # Build geometry from PRO pattern anchors
+                anchors = pro_pattern.get("anchors", [])
+                if len(anchors) >= 3:
+                    geo = {
+                        "is_valid": True,
+                        "anchors": anchors,
+                        "boundaries": pro_pattern.get("meta", {}).get("boundaries", {}),
+                        "mode": pattern_mode,
+                    }
+                    geo_source = "pro_pattern_engine"
+            
+            # Determine if we can render
             can_render = (
-                final["analysis_mode"] == "figure"
-                and geo is not None
-                and geo_source == "anchor_geometry"
-                and shape_valid is True
+                geo is not None
                 and pattern_type is not None
+                and geo_source is not None
             )
             
             if can_render:
+                # Update analysis mode
+                if pattern_mode == "strict":
+                    final["analysis_mode"] = "figure"
+                else:
+                    final["analysis_mode"] = "figure"  # Still figure, but loose
+                
+                # Update summary for loose patterns
+                if pattern_mode == "loose":
+                    label = pattern_type.replace("_", " ").title()
+                    state = pro_pattern_payload.get("pattern_meta", {}).get("state", "forming")
+                    final["summary"]["title"] = f"{label} Developing"
+                    final["summary"]["text"] = f"A {label.lower()} formation is developing. Currently {state}."
+                
                 final["ui"] = {
                     "main_overlay": {
                         "type": pattern_type,
                         "render_mode": "polygon",
                         "geometry": geo,
                         "source": geo_source,
+                        "mode": pattern_mode,
+                        "render_profile": render_profile,
                     },
                 }
+                
+                # Add alternatives if available
+                if pro_pattern_payload and pro_pattern_payload.get("alternatives"):
+                    final["ui"]["alternatives"] = pro_pattern_payload["alternatives"]
+                    
             else:
-                # NO geometry → NO overlay → FORCE structure mode
+                # NO geometry → NO overlay → structure mode
                 final["analysis_mode"] = "structure"
                 final["summary"]["title"] = "Structure developing"
                 final["summary"]["text"] = "No dominant pattern. Market structure is in transition."
